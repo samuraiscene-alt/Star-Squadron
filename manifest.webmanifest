@@ -1,0 +1,13 @@
+{
+  "name": "Star Squadron — Arcade Draft",
+  "short_name": "Star Squad",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#03060b",
+  "theme_color": "#03060b",
+  "orientation": "portrait",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
