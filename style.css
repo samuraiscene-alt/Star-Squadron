@@ -1,0 +1,17 @@
+* { box-sizing: border-box; }
+html, body {
+  width: 100%; height: 100%; margin: 0; overflow: hidden;
+  background: #03060b; color: #fff; touch-action: none;
+  -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+#game-shell { position: fixed; inset: 0; overflow: hidden; background: #03060b; }
+#game { display: block; width: 100vw; height: 100dvh; touch-action: none; }
+#rotate-hint {
+  display: none; position: fixed; inset: 0; z-index: 2; align-items: center; justify-content: center;
+  padding: 24px; background: rgba(3,6,11,.96); color: #e8edf5; text-align: center;
+  font: 700 18px/1.5 system-ui, sans-serif;
+}
+@media (orientation: landscape) and (max-width: 900px) {
+  #rotate-hint { display: flex; }
+}
