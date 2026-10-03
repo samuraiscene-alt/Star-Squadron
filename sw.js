@@ -1,5 +1,5 @@
-const CACHE = "star-squadron-v16";
-const FILES = ["./index.html", "./audio-unlock-v16.wav", "./style.css?v=16", "./game.js?v=16", "./manifest.webmanifest?v=15", "./icons/apple-touch-icon-v15.png", "./icons/icon-192-v15.png", "./icons/icon-512-v15.png"];
+const CACHE = "star-squadron-v17";
+const FILES = ["./index.html", "./audio-unlock-v16.wav", "./style.css?v=16", "./game.js?v=17", "./manifest.webmanifest?v=15", "./icons/apple-touch-icon-v15.png", "./icons/icon-192-v15.png", "./icons/icon-512-v15.png"];
 self.addEventListener("install", event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(FILES)).then(() => self.skipWaiting()));
 });

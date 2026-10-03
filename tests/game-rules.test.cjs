@@ -20,7 +20,7 @@ for(let n=1;n<=100;n++){
  for(let i=0;i<300&&g.get().stage===n&&g.get().state==='playing';i++)g.update(1/60);
  if(n===100){assert.equal(g.get().state,'victory');assert.equal(g.get().stage,100);}else assert.equal(g.get().stage,n+1);
 }
-assert(g.get().lives>3);g.beginGame();let s=g.get();s.ship.x=75;s.ship.invulnerable=0;g.loseLife();assert.equal(g.get().bursts[0].x,75);assert.equal(g.get().lives,2);g.pauseGame();let age=g.get().bursts[0].age;g.update(.5);assert.equal(g.get().bursts[0].age,age);g.resumeGame();g.update(.5);assert(g.get().bursts[0].age>age);g.get().ship.invulnerable=0;g.setLives(1);g.loseLife();assert.equal(g.get().state,'gameover');g.update(1);assert.equal(g.get().bursts.length,0);
+assert(g.get().lives>3);g.beginGame();let s=g.get();s.ship.x=75;s.ship.invulnerable=0;g.loseLife();assert.equal(g.get().bursts[0].x,75);assert.equal(g.get().lives,2);g.pauseGame();let age=g.get().bursts[0].age;g.update(.5);assert.equal(g.get().bursts[0].age,age);g.resumeGame();g.update(.5);assert(g.get().bursts[0].age>age);g.get().ship.invulnerable=0;g.setLives(1);g.loseLife();assert.equal(g.get().state,'continue');g.update(1);assert.equal(g.get().bursts.length,0);
 for(const n of [1,21,41,61,81,99]){g.beginGame();g.setStage(n);g.get().ship.invulnerable=999;for(let i=0;i<1200;i++)g.update(1/60);for(const e of g.get().enemies)assert(Number.isFinite(e.x)&&Number.isFinite(e.y));for(const b of g.get().enemyShots)assert(Number.isFinite(b.x)&&Number.isFinite(b.y));}
 
 // An off-center fighter must rise in the beam; the captor returns only after docking.

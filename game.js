@@ -39,6 +39,7 @@
   let scale = 1;
   let H = 780;
   let state = "title";
+  let continueDeadline = 0;
   let stage = 1;
   let score = 0;
   let highScore = readNumber("ss-high", 0);
@@ -417,6 +418,7 @@
     screenShake = 0;
     respawnDelay = 0;
     dualFighter = false; captivePending = false; captureAnimation = null;
+    continueDeadline = 0;
     score = 0;
     stage = 1;
     lives = 3;
@@ -1091,6 +1093,60 @@
     ctx.fillText(title, W / 2, H * .36 + 70);
   }
 
+  function continueSeconds() {
+    return Math.max(0, Math.min(9, Math.ceil((continueDeadline - Date.now()) / 1000) - 1));
+  }
+  function finishContinue() {
+    if (state !== "continue") return;
+    state = "gameover";
+    continueDeadline = 0;
+    resetControls();
+    stopSounds();
+  }
+  function continueGame() {
+    if (state !== "continue") return;
+    if (Date.now() >= continueDeadline) { finishContinue(); return; }
+    resetControls();
+    stopSounds();
+    continueDeadline = 0;
+    lives = 3;
+    dualFighter = false;
+    captureAnimation = null;
+    respawnDelay = 0;
+    ship.x = W / 2;
+    ship.invulnerable = 2.2;
+    playerShots = []; enemyShots = [];
+    particles = []; bursts = [];
+    screenShake = 0;
+    fireCooldown = 0;
+    state = "playing";
+    lastFrame = 0;
+    initAudio();
+  }
+  function continueChoice(x, y) {
+    if (x < 60 || x > W - 60) return null;
+    const top = H * .36;
+    if (y >= top + 78 && y <= top + 126) return "continue";
+    if (y >= top + 138 && y <= top + 186) return "restart";
+    return null;
+  }
+  function drawContinue() {
+    const top = H * .36;
+    ctx.fillStyle = "rgba(0,0,0,.8)";
+    ctx.fillRect(26, top, W - 52, 204);
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillStyle = "#e5eaf0";
+    ctx.font = "bold 36px ui-monospace, monospace";
+    ctx.fillText(String(continueSeconds()), W / 2, top + 40);
+    ctx.font = "bold 17px system-ui, sans-serif";
+    for (const [label, offset] of [["이어서하기", 78], ["처음부터하기", 138]]) {
+      ctx.fillStyle = "rgba(110,180,220,.16)";
+      ctx.fillRect(60, top + offset, W - 120, 48);
+      ctx.fillStyle = "#e5eaf0";
+      ctx.fillText(label, W / 2, top + offset + 24);
+    }
+  }
+
   function addExplosion(x, y, color, count = 8) {
     for (let i = 0; i < count; i++) {
       const a = rand(0, Math.PI * 2), speed = rand(18, 72);
@@ -1249,7 +1305,9 @@
     ship.x = W / 2;
     playerImpactFeedback();
     if (lives <= 0) {
-      state = "gameover";
+      state = "continue";
+      continueDeadline = Date.now() + 10000;
+      resetControls();
       if (score > highScore) {
         highScore = score;
         writeNumber("ss-high", highScore);
@@ -1259,6 +1317,7 @@
 
   function update(dt) {
     if (state === "paused") return;
+    if (state === "continue" && Date.now() >= continueDeadline) finishContinue();
     screenShake = Math.max(0, screenShake - dt);
     updateEffects(dt);
     if (captureAnimation) {
@@ -1348,6 +1407,7 @@
       if (ship.invulnerable <= 0 && playerDistance(enemy.x, enemy.y) < 18) loseLife(enemy.x);
     }
 
+    if (state !== "playing") return;
     for (const shot of playerShots) {
       shot.y += shot.vy * dt;
       if (shot.type === "laser") shot.ttl -= dt;
@@ -1404,6 +1464,7 @@
     }
     enemyShots = enemyShots.filter(s => !s.dead && s.y < H + 15 && s.x > -15 && s.x < W + 15);
 
+    if (state !== "playing") return;
     for (const item of items) {
       item.y += item.vy * dt;
       if (respawnDelay <= 0 && distance(item.x, item.y, ship.x, ship.y) < 25) {
@@ -1453,6 +1514,7 @@
     drawControls();
     if (state === "title") drawOverlay("STAR SQUADRON");
     if (state === "victory") drawOverlay("CLEAR");
+    if (state === "continue") drawContinue();
     if (state === "gameover") drawOverlay("GAME OVER");
     if (state === "paused") drawOverlay("PAUSED");
     ctx.restore();
@@ -1494,6 +1556,13 @@
     if (useTouchInput && event.pointerType === "touch") return;
     event.preventDefault();
     const p = pointerPosition(event);
+    if (state === "continue") {
+      if (Date.now() >= continueDeadline) { finishContinue(); return; }
+      const choice = continueChoice(p.x, p.y);
+      if (choice === "continue") continueGame();
+      else if (choice === "restart") beginGame();
+      return;
+    }
     if (soundHit(p.x, p.y)) { toggleSound(); return; }
     if ((state === "playing" || state === "paused") && pauseHit(p.x, p.y)) {
       if (state === "playing") pauseGame(); else resumeGame();
@@ -1570,6 +1639,12 @@
   }
   window.addEventListener("keydown", event => {
     if (["ArrowLeft", "ArrowRight", " "].includes(event.key)) event.preventDefault();
+    if (state === "continue") {
+      if (Date.now() >= continueDeadline) { finishContinue(); return; }
+      if (!event.repeat && event.key === "Enter") continueGame();
+      else if (!event.repeat && event.key.toLowerCase() === "r") beginGame();
+      return;
+    }
     if (event.key === "Enter") {
       if (state === "title" || state === "gameover" || state === "victory") beginGame();
       else if (state === "paused") resumeGame();
