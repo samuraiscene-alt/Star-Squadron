@@ -56,7 +56,7 @@
   let musicTimer = null;
   let musicStep = 0;
   let fireCooldown = 0;
-  let attackCooldown = 0.6;
+  let attackCooldown = stage === 1 ? 3.4 : 3.0;
   let stageClearTimer = 0;
   let banner = "";
   let bannerTime = 0;
@@ -149,7 +149,7 @@
     return {
       id: `${stage}-${kind}-${col}-${row}-${Math.random().toString(36).slice(2, 7)}`,
       kind, col, row, baseX: x, baseY: y, x, y, hp, maxHp: hp,
-      alive: true, dive: null, flash: 0, carrier: false, shot: false,
+      alive: true, dive: null, entry: null, angle: 0, flash: 0, carrier: false, shot: false,
       phase: rand(0, Math.PI * 2)
     };
   }
@@ -162,7 +162,7 @@
     boss = null;
     bossStage = stage % 3 === 0;
     stageClearTimer = 0;
-    attackCooldown = 0.6;
+    attackCooldown = stage === 1 ? 3.4 : 3.0;
     groupAttackIndex = 0;
     const spacing = 41;
     const left = (W - spacing * 7) / 2;
@@ -183,6 +183,23 @@
       if (weapon < 5) {
         const carrier = enemies.find(e => e.kind === "scout" && e.col === 3 && e.row === 3);
         if (carrier) carrier.carrier = true;
+      }
+      // Each row enters as one shared formation, with no entry-phase firing.
+      for (let row = 0; row <= 4; row++) {
+        const squad = enemies.filter(e => e.row === row);
+        const centerX = squad.reduce((sum, e) => sum + e.baseX, 0) / squad.length;
+        const centerY = squad[0].baseY;
+        const side = row % 2 === 0 ? -1 : 1;
+        const startX = side < 0 ? -190 : W + 190;
+        const route = [
+          [[startX, 65], [W / 2, 20], [W / 2 - side * 100, 230], [W / 2, 225]],
+          [[W / 2, 225], [W / 2 + side * 115, 225], [centerX + side * 90, centerY], [centerX, centerY]]
+        ];
+        squad.forEach(e => {
+          e.entry = { age: -row * 0.18, duration: 2.0, route, offsetX: e.baseX - centerX, offsetY: 0 };
+          const p = flightPosition(e.entry, 0);
+          e.x = p.x; e.y = p.y;
+        });
       }
       banner = `STAGE ${stage}`;
       bannerTime = 1.3;
@@ -209,22 +226,69 @@
     startStage();
   }
 
+  function flightPosition(flight, progress) {
+    const t = clamp(progress, 0, 1) * flight.route.length;
+    const index = Math.min(flight.route.length - 1, Math.floor(t));
+    const u = Math.min(1, t - index), v = 1 - u;
+    const points = flight.route[index];
+    return {
+      x: v * v * v * points[0][0] + 3 * v * v * u * points[1][0] + 3 * v * u * u * points[2][0] + u * u * u * points[3][0] + flight.offsetX,
+      y: v * v * v * points[0][1] + 3 * v * v * u * points[1][1] + 3 * v * u * u * points[2][1] + u * u * u * points[3][1] + flight.offsetY
+    };
+  }
   function launchGroupAttack() {
-    const squads = ["scout", "assault", "leader"];
-    const kind = squads[groupAttackIndex++ % squads.length];
-    const available = enemies.filter(e => e.alive && !e.dive && e.kind === kind);
+    if (enemies.some(e => e.alive && (e.entry || e.dive))) return;
+    const order = ["scout", "assault", "scout", "leader"];
+    let available = [];
+    for (let attempt = 0; attempt < order.length; attempt++) {
+      const kind = order[groupAttackIndex++ % order.length];
+      available = enemies.filter(e => e.alive && !e.entry && !e.dive && e.kind === kind);
+      if (available.length) break;
+    }
     if (!available.length) return;
-    available.sort((a, b) => Math.abs(a.x - ship.x) - Math.abs(b.x - ship.x));
-    const count = kind === "scout" ? 3 : kind === "assault" ? 2 : 1;
-    available.slice(0, count).forEach((enemy, i) => {
-      enemy.dive = { age: -i * 0.12, duration: kind === "scout" ? 2.2 : 2.6, fromX: enemy.baseX, fromY: enemy.baseY };
+    // Select neighbours in the same row instead of unrelated nearest targets.
+    const row = available[0].row;
+    available = available.filter(e => e.row === row).sort((a, b) => a.col - b.col);
+    const kind = available[0].kind;
+    const count = kind === "leader" ? 1 : stage === 1 ? 2 : 3;
+    const squad = available.slice(0, count);
+    const cx = squad.reduce((sum, e) => sum + e.x, 0) / squad.length;
+    const cy = squad.reduce((sum, e) => sum + e.y, 0) / squad.length;
+    const homeX = squad.reduce((sum, e) => sum + e.baseX, 0) / squad.length;
+    const homeY = squad[0].baseY;
+    const direction = groupAttackIndex % 2 ? 1 : -1;
+    const target = clamp(ship.x, 100, W - 100);
+    const sideX = clamp(target + direction * 65, 65, W - 65);
+    const front = Math.max(homeY + 70, ship.y - 100);
+    const rear = ship.y + 44;
+    let route;
+    if (kind === "leader") {
+      // Pass beside the player, turn behind it, then fire upward on the return leg.
+      const opposite = clamp(target - direction * 65, 45, W - 45);
+      route = [
+        [[cx, cy], [cx + direction * 60, cy - 25], [sideX, front - 100], [sideX, front]],
+        [[sideX, front], [sideX, ship.y], [sideX, rear], [target, rear]],
+        [[target, rear], [opposite, rear], [opposite, rear - 4], [opposite, ship.y + 24]],
+        [[opposite, ship.y + 24], [opposite, front], [homeX - direction * 65, homeY + 60], [homeX, homeY]]
+      ];
+    } else {
+      const swing = kind === "scout" ? 60 : 90;
+      route = [
+        [[cx, cy], [cx + direction * swing, cy - 25], [target + direction * 65, front - 130], [target, front - 60]],
+        [[target, front - 60], [target - direction * 70, front + 20], [target - direction * 70, front + 55], [target, front + 55]],
+        [[target, front + 55], [target + direction * 90, front + 55], [homeX + direction * 80, homeY + 50], [homeX, homeY]]
+      ];
+    }
+    squad.forEach(enemy => {
+      enemy.dive = { age: 0, duration: kind === "leader" ? 6.2 : stage === 1 ? 4.5 : 3.8,
+        route, offsetX: enemy.x - cx, offsetY: enemy.y - cy, rearAttack: kind === "leader" };
       enemy.shot = false;
     });
   }
   function enemyFire(enemy) {
-    const speed = 135 + stage * 5;
+    const speed = stage === 1 ? 100 : 125 + stage * 4;
     const baseAngle = Math.atan2(ship.y - enemy.y, ship.x - enemy.x);
-    const angles = enemy.kind === "leader" ? [-0.3, -0.15, 0, 0.15, 0.3]
+    const angles = stage === 1 ? [0] : enemy.kind === "leader" ? [-0.3, -0.15, 0, 0.15, 0.3]
       : enemy.kind === "assault" ? [-0.16, 0, 0.16] : [0];
     angles.forEach(offset => {
       const angle = baseAngle + offset;
@@ -302,7 +366,7 @@
     if (!enemy.alive) return;
     const blink = enemy.flash > 0 && Math.floor(elapsed * 24) % 2 === 0;
     if (blink) return;
-    const bob = enemy.dive ? 0 : Math.sin(elapsed * 2 + enemy.phase) * 1.5;
+    const bob = enemy.dive || enemy.entry ? 0 : Math.sin(elapsed * 2) * 1.5;
     let map = scoutPixels;
     let palette = ["#f5c54a", "#1f4276", "#f9e7a2"];
     let cell = 1.65;
@@ -314,7 +378,11 @@
       palette = ["#a85bd5", "#543886", "#75d9e9", "#ffe06b"];
       cell = 1.8;
     }
-    drawPixelMap(map, enemy.x, enemy.y + bob, palette, cell);
+    ctx.save();
+    ctx.translate(enemy.x, enemy.y + bob);
+    ctx.rotate(enemy.angle || 0);
+    drawPixelMap(map, 0, 0, palette, cell);
+    ctx.restore();
     if (enemy.carrier) {
       ctx.fillStyle = "#fff1a3";
       ctx.beginPath();
@@ -562,17 +630,16 @@
     if (bannerTime > 0) bannerTime -= dt;
     if (fireButton.flash > 0) fireButton.flash -= dt;
     if (fireButton.pointer === null) fireButton.pressed = false;
-    if (joy.pointer === null) joy.knobX *= Math.exp(-dt * 14);
+    if (joy.pointer === null) joy.knobX = 0;
     if (state !== "playing") return;
 
     ship.invulnerable = Math.max(0, ship.invulnerable - dt);
     const keyboardAxis = (keys.has("ArrowRight") || keys.has("d") || keys.has("D") ? 1 : 0)
       - (keys.has("ArrowLeft") || keys.has("a") || keys.has("A") ? 1 : 0);
     const axis = Math.abs(keyboardAxis) > 0 ? keyboardAxis : joy.knobX / 19;
+    // Input determines velocity in this frame; retain the existing top speed.
     const inputAxis = clamp(axis, -1, 1);
-    const targetSpeed = Math.abs(inputAxis) < 0.08 ? 0 : inputAxis * 165;
-    const acceleration = targetSpeed === 0 ? 850 : 650;
-    ship.vx += clamp(targetSpeed - ship.vx, -acceleration * dt, acceleration * dt);
+    ship.vx = Math.abs(inputAxis) < 0.08 ? 0 : inputAxis * 165;
     ship.x = clamp(ship.x + ship.vx * dt, 19, W - 19);
     if ((ship.x <= 19 && ship.vx < 0) || (ship.x >= W - 19 && ship.vx > 0)) ship.vx = 0;
 
@@ -587,7 +654,7 @@
       attackCooldown -= dt;
       if (attackCooldown <= 0) {
         launchGroupAttack();
-        attackCooldown = Math.max(.85, 1.65 - stage * .08);
+        attackCooldown = stage === 1 ? 5.0 : Math.max(2.4, 4.1 - stage * .08);
       }
     } else if (boss) {
       boss.age += dt;
@@ -603,28 +670,30 @@
     for (const enemy of enemies) {
       if (!enemy.alive) continue;
       enemy.flash = Math.max(0, enemy.flash - dt);
-      if (!enemy.dive) {
-        enemy.x = enemy.baseX + Math.sin(elapsed * .65 + enemy.phase) * 8;
-        enemy.y = enemy.baseY + Math.sin(elapsed * 1.7 + enemy.phase) * 1.6;
+      const flight = enemy.entry || enemy.dive;
+      if (!flight) {
+        enemy.x = enemy.baseX + Math.sin(elapsed * .65) * 5;
+        enemy.y = enemy.baseY + Math.sin(elapsed * 1.7) * 1.6;
+        enemy.angle = 0;
       } else {
-        const d = enemy.dive;
-        d.age += dt;
-        if (d.age < 0) continue;
-        const p = clamp(d.age / d.duration, 0, 1);
-        const attackPart = .7;
-        const targetX = ship.x;
-        if (p < attackPart) {
-          const q = p / attackPart;
-          const curveSize = enemy.kind === "scout" ? 25 : enemy.kind === "assault" ? 42 : 55;
-          enemy.x = d.fromX + (targetX - d.fromX) * q * .42 + Math.sin(q * Math.PI * 2 + enemy.phase) * curveSize;
-          enemy.y = d.fromY + (H * .69 - d.fromY) * q;
-        } else {
-          const q = (p - attackPart) / (1 - attackPart);
-          enemy.x = enemy.x + (d.fromX - enemy.x) * Math.min(1, dt * 2.7);
-          enemy.y = H * .69 + (d.fromY - H * .69) * q;
+        flight.age += dt;
+        if (flight.age < 0) continue;
+        const p = clamp(flight.age / flight.duration, 0, 1);
+        const position = flightPosition(flight, p);
+        const ahead = flightPosition(flight, Math.min(1, p + 0.003));
+        enemy.x = position.x;
+        enemy.y = position.y;
+        enemy.angle = Math.atan2(ahead.x - position.x, -(ahead.y - position.y));
+        if (enemy.dive && !enemy.shot) {
+          const fireNow = flight.rearAttack
+            ? p >= 0.66 && p < 0.76 && enemy.y > ship.y + 12
+            : p >= 0.42 && p < 0.7;
+          if (fireNow) { enemyFire(enemy); enemy.shot = true; }
         }
-        if (!enemy.shot && p > .22 && p < .75) { enemyFire(enemy); enemy.shot = true; }
-        if (p >= 1) { enemy.dive = null; enemy.x = enemy.baseX; enemy.y = enemy.baseY; }
+        if (p >= 1) {
+          enemy.entry = null; enemy.dive = null;
+          enemy.x = enemy.baseX; enemy.y = enemy.baseY; enemy.angle = 0;
+        }
       }
       if (ship.invulnerable <= 0 && distance(enemy.x, enemy.y, ship.x, ship.y) < 18) loseLife();
     }
@@ -731,7 +800,7 @@
     joy.knobX = clamp(p.x - joy.x, -20, 20);
   }
   function pointerUp(event) {
-    if (joy.pointer === event.pointerId) { joy.pointer = null; }
+    if (joy.pointer === event.pointerId) { joy.pointer = null; joy.knobX = 0; }
     if (fireButton.pointer === event.pointerId) { fireButton.pointer = null; fireButton.pressed = false; }
   }
   canvas.addEventListener("pointerdown", pointerDown);
