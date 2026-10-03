@@ -5,6 +5,7 @@
   const ctx = canvas.getContext("2d", { alpha: false });
   const W = 360;
   const keys = new Set();
+  const useTouchInput = "ontouchstart" in window;
 
   const playerPixels = [
     "000000111000000", "000001222100000", "000012333210000",
@@ -106,8 +107,13 @@
     if (!soundEnabled) return;
     const AudioCtor = window.AudioContext || window.webkitAudioContext;
     if (!AudioCtor) return;
-    if (!audioContext) audioContext = new AudioCtor();
-    if (audioContext.state === "suspended") audioContext.resume();
+    try {
+      if (!audioContext) audioContext = new AudioCtor();
+      if (audioContext.state !== "running") {
+        const resume = audioContext.resume();
+        if (resume && resume.catch) resume.catch(() => {});
+      }
+    } catch (_) { return; }
     if (!musicTimer) {
       const notes = [196, 247, 294, 247, 220, 262, 330, 262];
       musicTimer = window.setInterval(() => {
@@ -126,7 +132,7 @@
     }
   }
   function tone(freq, duration = 0.07, type = "square", volume = 0.04) {
-    if (!soundEnabled || !audioContext) return;
+    if (!soundEnabled || !audioContext || state !== "playing") return;
     const osc = audioContext.createOscillator();
     const gain = audioContext.createGain();
     const now = audioContext.currentTime;
@@ -142,6 +148,7 @@
     soundEnabled = !soundEnabled;
     writeNumber("ss-sound", soundEnabled ? 1 : 0);
     if (soundEnabled) initAudio();
+    else stopMusic();
   }
 
   function makeEnemy(kind, col, row, x, y) {
@@ -213,6 +220,7 @@
     }
   }
   function beginGame() {
+    resetControls();
     initAudio();
     score = 0;
     stage = 1;
@@ -394,6 +402,17 @@
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.fillText(soundEnabled ? "♪" : "×", soundX, 52);
+    if (state === "playing" || state === "paused") {
+      const pauseX = W - 54;
+      ctx.strokeStyle = "#94a7ba";
+      ctx.beginPath(); ctx.arc(pauseX, 52, 10, 0, Math.PI * 2); ctx.stroke();
+      ctx.fillStyle = "#d9e7f2";
+      if (state === "paused") {
+        ctx.beginPath(); ctx.moveTo(pauseX - 3, 47); ctx.lineTo(pauseX + 5, 52); ctx.lineTo(pauseX - 3, 57); ctx.closePath(); ctx.fill();
+      } else {
+        ctx.fillRect(pauseX - 4, 47, 2.5, 10); ctx.fillRect(pauseX + 1.5, 47, 2.5, 10);
+      }
+    }
   }
   function drawEnemy(enemy) {
     if (!enemy.alive) return;
@@ -708,6 +727,7 @@
   }
 
   function update(dt) {
+    if (state !== "playing") return;
     elapsed += dt;
     if (bannerTime > 0) bannerTime -= dt;
     if (fireButton.flash > 0) fireButton.flash -= dt;
@@ -853,66 +873,142 @@
     drawControls();
     if (state === "title") drawOverlay("STAR SQUADRON", "편대 공격을 돌파하고 무기를 강화하세요", "화면을 눌러 시작 · 좌우 조이스틱 / 발사 버튼");
     if (state === "gameover") drawOverlay("GAME OVER", `SCORE ${String(score).padStart(6, "0")}  ·  BEST ${String(highScore).padStart(6, "0")}`, "화면을 눌러 다시 시작");
-    if (state === "paused") drawOverlay("PAUSED", "게임이 잠시 멈췄습니다", "화면을 눌러 계속");
+    if (state === "paused") drawOverlay("PAUSED", "게임이 잠시 멈췄습니다", "이 안내창을 눌러 계속");
   }
 
-  function pointerPosition(event) {
-    return { x: event.clientX / scale, y: event.clientY / scale };
+  function resetControls() {
+    const captured = [joy.pointer, fireButton.pointer];
+    joy.pointer = null; joy.knobX = 0;
+    fireButton.pointer = null; fireButton.pressed = false;
+    ship.vx = 0;
+    keys.clear();
+    for (const id of captured) {
+      if (typeof id === "number") {
+        try { if (canvas.hasPointerCapture(id)) canvas.releasePointerCapture(id); } catch (_) {}
+      }
+    }
   }
-  function soundHit(x, y) { return distance(x, y, W - 21, 52) < 14; }
-  function pointerDown(event) {
-    event.preventDefault();
-    try { canvas.setPointerCapture(event.pointerId); } catch (_) { /* not supported */ }
-    const p = pointerPosition(event);
-    if (soundHit(p.x, p.y)) { initAudio(); toggleSound(); return; }
-    if (state === "title" || state === "gameover") { beginGame(); return; }
-    if (state === "paused") { state = "playing"; initAudio(); return; }
+  function pauseGame() {
     if (state !== "playing") return;
+    state = "paused";
+    resetControls();
+    stopMusic();
+  }
+  function resumeGame() {
+    if (state !== "paused") return;
+    resetControls();
+    state = "playing";
+    lastFrame = 0;
+    initAudio();
+  }
+  function pointerPosition(event) {
+    const rect = canvas.getBoundingClientRect();
+    return { x: (event.clientX - rect.left) / scale, y: (event.clientY - rect.top) / scale };
+  }
+  function soundHit(x, y) { return distance(x, y, W - 21, 52) < 15; }
+  function pauseHit(x, y) { return distance(x, y, W - 54, 52) < 16; }
+  function pointerDown(event) {
+    if (useTouchInput && event.pointerType === "touch") return;
+    event.preventDefault();
+    const p = pointerPosition(event);
+    if (soundHit(p.x, p.y)) { toggleSound(); return; }
+    if ((state === "playing" || state === "paused") && pauseHit(p.x, p.y)) {
+      if (state === "playing") pauseGame(); else resumeGame();
+      return;
+    }
+    if (state === "paused") {
+      if (p.x >= 26 && p.x <= W - 26 && p.y >= H * .36 && p.y <= H * .36 + 140) resumeGame();
+      return;
+    }
+    if (state === "title" || state === "gameover") beginGame();
+    if (state !== "playing") return;
+    initAudio();
     if (distance(p.x, p.y, joy.x, joy.y) < 48 && joy.pointer === null) {
       joy.pointer = event.pointerId;
-      joy.knobX = clamp(p.x - joy.x, -20, 20);
+      joy.knobX = clamp(p.x - joy.x, -19, 19);
     } else if (distance(p.x, p.y, fireButton.x, fireButton.y) < 48 && fireButton.pointer === null) {
       fireButton.pointer = event.pointerId;
       fireButton.pressed = true;
       fireButton.flash = .12;
-      initAudio();
+    } else return;
+    if (typeof event.pointerId === "number") {
+      try { canvas.setPointerCapture(event.pointerId); } catch (_) {}
     }
   }
   function pointerMove(event) {
+    if (useTouchInput && event.pointerType === "touch") return;
     if (joy.pointer !== event.pointerId) return;
     event.preventDefault();
     const p = pointerPosition(event);
-    joy.knobX = clamp(p.x - joy.x, -20, 20);
+    joy.knobX = clamp(p.x - joy.x, -19, 19);
   }
   function pointerUp(event) {
-    if (joy.pointer === event.pointerId) { joy.pointer = null; joy.knobX = 0; }
+    if (useTouchInput && event.pointerType === "touch") return;
+    if (joy.pointer === event.pointerId) { joy.pointer = null; joy.knobX = 0; ship.vx = 0; }
     if (fireButton.pointer === event.pointerId) { fireButton.pointer = null; fireButton.pressed = false; }
   }
   canvas.addEventListener("pointerdown", pointerDown);
-  canvas.addEventListener("pointermove", pointerMove);
-  canvas.addEventListener("pointerup", pointerUp);
-  canvas.addEventListener("pointercancel", pointerUp);
+  window.addEventListener("pointermove", pointerMove, { passive: false });
+  window.addEventListener("pointerup", pointerUp);
+  window.addEventListener("pointercancel", pointerUp);
   canvas.addEventListener("lostpointercapture", pointerUp);
+
+  function touchPointer(touch, event) {
+    return { pointerId: "touch-" + touch.identifier, clientX: touch.clientX, clientY: touch.clientY,
+      preventDefault: () => event.preventDefault() };
+  }
+  function reconcileTouches(event) {
+    const active = new Set(Array.from(event.touches, touch => "touch-" + touch.identifier));
+    if (typeof joy.pointer === "string" && !active.has(joy.pointer)) {
+      joy.pointer = null; joy.knobX = 0; ship.vx = 0;
+    }
+    if (typeof fireButton.pointer === "string" && !active.has(fireButton.pointer)) {
+      fireButton.pointer = null; fireButton.pressed = false;
+    }
+  }
+  if (useTouchInput) {
+    canvas.addEventListener("touchstart", event => {
+      event.preventDefault();
+      reconcileTouches(event);
+      for (const touch of event.changedTouches) pointerDown(touchPointer(touch, event));
+    }, { passive: false });
+    window.addEventListener("touchmove", event => {
+      reconcileTouches(event);
+      if (joy.pointer === null && fireButton.pointer === null) return;
+      event.preventDefault();
+      for (const touch of event.changedTouches) pointerMove(touchPointer(touch, event));
+    }, { passive: false });
+    const endTouches = event => {
+      for (const touch of event.changedTouches) pointerUp(touchPointer(touch, event));
+      reconcileTouches(event);
+    };
+    window.addEventListener("touchend", endTouches);
+    window.addEventListener("touchcancel", endTouches);
+  }
   window.addEventListener("keydown", event => {
     if (["ArrowLeft", "ArrowRight", " "].includes(event.key)) event.preventDefault();
     if (event.key === "Enter") {
       if (state === "title" || state === "gameover") beginGame();
-      else if (state === "paused") state = "playing";
+      else if (state === "paused") resumeGame();
     }
-    if (event.key.toLowerCase() === "m") toggleSound();
-    if (event.key.toLowerCase() === "p" && state === "playing") state = "paused";
-    keys.add(event.key);
+    if (!event.repeat && event.key.toLowerCase() === "m") toggleSound();
+    if (!event.repeat && (event.key.toLowerCase() === "p" || event.key === "Escape")) {
+      if (state === "playing") pauseGame(); else if (state === "paused") resumeGame();
+    }
+    if (state === "playing") keys.add(event.key);
   });
   window.addEventListener("keyup", event => keys.delete(event.key));
+  window.addEventListener("blur", () => { pauseGame(); resetControls(); });
+  window.addEventListener("pagehide", () => { pauseGame(); resetControls(); });
   document.addEventListener("visibilitychange", () => {
-    if (document.hidden && state === "playing") state = "paused";
+    if (document.hidden) { pauseGame(); resetControls(); }
   });
 
   function frame(now) {
     const dt = Math.min(.045, lastFrame ? (now - lastFrame) / 1000 : .016);
     lastFrame = now;
     update(dt);
-    render(dt);
+    render(state === "paused" ? 0 : dt);
     requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);
