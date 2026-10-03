@@ -383,7 +383,7 @@
         const carrier = enemies.find(e => e.row === 3 && e.col === 3);
         if (carrier) carrier.carrier = "score";
       }
-      // Each row enters as one shared formation, with no entry-phase firing.
+      // Entry wings fire through one designated shooter each.
       for (let row = 0; row <= 4; row++) {
         const squad = enemies.filter(e => e.row === row);
         const centerX = squad.reduce((sum, e) => sum + e.baseX, 0) / squad.length;
@@ -396,7 +396,7 @@
         ];
         squad.forEach(e => {
           e.entry = { age: -row * 0.18, duration: 2.0, route, offsetX: e.baseX - centerX, offsetY: 0,
-            fireTimes: stage >= 30 ? [.26 + e.col * .035, .58 + e.col * .025] : [.3 + e.col * .055], nextShot: 0 };
+            fireTimes: [1, 3, 2, 4, 0].slice(0, Math.min(5, 2 + Math.floor((stage - 1) / 30))).includes(row) && e.col === (row % 2 ? 2 : 0) ? (stage >= 30 ? [.36, .64] : [.42]) : [], nextShot: 0 };
           const p = flightPosition(e.entry, 0);
           e.x = p.x; e.y = p.y;
         });
@@ -457,12 +457,19 @@
     };
   }
   function launchGroupAttack() {
-    if (enemies.some(e => e.alive && (e.entry || e.dive || e.beam || e.escape))) return;
+    // Several wings fly at once; only a small shared pool may fire missiles.
+    for (let wing = 0; wing < 3; wing++) launchFlightWing();
+  }
+  function launchFlightWing() {
+    if (enemies.some(e => e.alive && e.entry)) return;
+    const active = enemies.filter(e => e.alive && e.dive);
+    const maxFlying = stage < 26 ? 12 : stage < 51 ? 15 : 18;
+    if (active.length >= maxFlying) return;
     const order = ["leader", "scout", "interceptor", "assault", "leader", "armored", "phantom", "elite", "scout"];
     let available = [];
     for (let attempt = 0; attempt < order.length; attempt++) {
       const kind = order[groupAttackIndex++ % order.length];
-      available = enemies.filter(e => e.alive && !e.entry && !e.dive && e.kind === kind && (e.role !== "captor" || e.carrying || dualFighter || captivePending || lives <= 1));
+      available = enemies.filter(e => e.alive && !e.entry && !e.dive && !e.beam && !e.escape && e.kind === kind && (e.role !== "captor" || e.carrying || dualFighter || captivePending || lives <= 1));
       if (available.length) break;
     }
     if (!available.length) return;
@@ -471,7 +478,7 @@
     available = available.filter(e => e.row === row).sort((a, b) => a.col - b.col);
     const kind = available[0].kind;
     const count = kind === "leader" ? 2 : Math.min(6, 4 + Math.floor((stage - 1) / 25));
-    const squad = available.slice(0, count);
+    const squad = available.slice(0, Math.min(count, maxFlying - active.length));
     const cx = squad.reduce((sum, e) => sum + e.x, 0) / squad.length;
     const cy = squad.reduce((sum, e) => sum + e.y, 0) / squad.length;
     const homeX = squad.reduce((sum, e) => sum + e.baseX, 0) / squad.length;
@@ -528,13 +535,38 @@
           [270, front + 25], [295, middle], [220, cy + 30], [homeX, homeY]]);
       }
     }
+    if (kind !== "leader") {
+      if (direction < 0) {
+        route = route.map(segment => segment.map(([x, y]) => [W - x, y]));
+        route[0][0] = [cx, cy];
+        route[route.length - 1][3] = [homeX, homeY];
+      }
+      const flank = groupAttackIndex % 3;
+      const gate = flank === 0 ? [-24, cy + 85] : flank === 1 ? [W + 24, cy + 85] : [W / 2, -25];
+      const bank = flank === 0 ? -65 : flank === 1 ? W + 65 : W / 2;
+      const lead = [[cx, cy], [bank, flank === 2 ? -55 : cy - 35], [bank, flank === 2 ? -55 : cy + 60], gate];
+      route[0][0] = gate;
+      route.unshift(lead);
+    }
+    // Alternate looping returns with a bottom exit and a separate top re-entry.
+    // Separate Bezier segments leave no visible line through the playfield.
+    const wrapReturn = kind !== "leader" && groupAttackIndex % 2 === 0;
+    if (wrapReturn) {
+      const exitX = clamp(target + direction * 45, 45, W - 45);
+      const gate = route[1][0];
+      const attack = curvedRoute([gate, [sideX, front - 90], [exitX, ship.y + 60], [exitX, H + 70]]);
+      const arrival = curvedRoute([[exitX, -70], [homeX + direction * 45, homeY - 35], [homeX, homeY]]);
+      route = [route[0], ...attack, ...arrival];
+    }
     const pattern = (groupAttackIndex - 1) % flightModes(stage);
+    const shooterLimit = Math.min(5, 2 + Math.floor((stage - 1) / 30));
+    const shooterSlots = Math.max(0, shooterLimit - active.filter(e => e.dive.fireTimes.length > 0).length);
     squad.forEach((enemy, index) => {
       enemy.dive = { age: kind === "leader" ? 0 : -index * .16,
         duration: enemy.carrying ? 3.6 : Math.max(4.7, 6.2 - (stage - 1) * .015) + (pattern === 1 || pattern >= 3 ? 1 : 0),
-        route, offsetX: enemy.x - cx, offsetY: enemy.y - cy, rearAttack: kind === "leader",
+        route, wrapReturn, offsetX: enemy.x - cx, offsetY: enemy.y - cy, rearAttack: kind === "leader",
         ribbon: kind !== "leader",
-        fireTimes: kind === "leader" ? (stage >= 10 ? [.18, .28, .68] : [.18, .28]) : stage >= 60 ? [.24, .42, .62] : [.34, .55],
+        fireTimes: index >= shooterSlots ? [] : kind === "leader" ? (stage >= 10 ? [.18, .28, .68] : [.18, .28]) : stage >= 60 ? [.24, .42, .62] : [.34, .55],
         nextShot: 0 };
       enemy.shot = false;
     });
@@ -586,7 +618,7 @@
     }
     if (enemy.entry || enemy.dive || enemy.carrying || dualFighter || captivePending || lives <= 1) return false;
     enemy.beamCooldown -= dt;
-    if (enemy.beamCooldown <= 0 && !enemies.some(e => e.alive && (e.entry || e.dive || e.beam))) {
+    if (enemy.beamCooldown <= 0 && !enemies.some(e => e.alive && (e.entry || e.beam))) {
       enemy.beam = { phase: "approach", age: 0, fromX: enemy.x, fromY: enemy.y,
         x: clamp(ship.x, 55, W - 55), y: Math.max(230, ship.y - 180) };
       banner = "납치 빔 접근 · 좌우로 피하거나 특수기를 격추!"; bannerTime = 2;
@@ -622,7 +654,9 @@
     }
     if (captureAnimation) {
       const position = capturedFighterPosition(captureAnimation);
-      drawCraft("player", position.x, position.y, 0, weapon);
+      const t = clamp(captureAnimation.age / captureAnimation.duration, 0, 1);
+      const spin = Math.PI * 4 * (1 - Math.pow(1 - t, 1.5));
+      drawCraft("player", position.x, position.y, spin, weapon);
     }
   }
 
@@ -731,6 +765,7 @@
     }
   }
   const craftArtwork = new Map();
+  const capturedArtwork = new Map();
   function craftImage(kind, level = 1) {
     const key = kind + "-" + level;
     if (craftArtwork.has(key)) return craftArtwork.get(key);
@@ -866,14 +901,30 @@
     craftArtwork.set(key, art);
     return art;
   }
-  function drawCraft(kind, x, y, angle = 0, level = 1, miniature = false) {
-    const art = craftImage(kind, level);
+  function capturedCraftImage(level) {
+    if (capturedArtwork.has(level)) return capturedArtwork.get(level);
+    const normal = craftImage("player", level);
+    const gray = document.createElement("canvas"); gray.width = normal.width; gray.height = normal.height;
+    const paint = gray.getContext("2d"); paint.drawImage(normal, 0, 0);
+    const pixels = paint.getImageData(0, 0, gray.width, gray.height);
+    if (pixels && pixels.data) {
+      for (let i = 0; i < pixels.data.length; i += 4) {
+        const light = Math.round(pixels.data[i] * .2126 + pixels.data[i + 1] * .7152 + pixels.data[i + 2] * .0722);
+        pixels.data[i] = pixels.data[i + 1] = pixels.data[i + 2] = light;
+      }
+      paint.putImageData(pixels, 0, 0);
+    }
+    capturedArtwork.set(level, gray);
+    return gray;
+  }
+  function drawCraft(kind, x, y, angle = 0, level = 1, miniature = false, captured = false) {
+    const art = captured ? capturedCraftImage(level) : craftImage(kind, level);
     const size = miniature ? .32 : kind === "scout" ? .64 : kind === "assault" ? .69
       : kind === "leader" ? .75 : kind === "boss" ? .84 + level * .08
       : kind === "interceptor" ? .65 : kind === "armored" ? .74 : kind === "phantom" ? .66 : kind === "elite" ? .77 : level >= 4 ? .88 : .82;
     ctx.save(); ctx.translate(x, y); ctx.rotate(angle); ctx.scale(size, size);
     ctx.imageSmoothingEnabled = true;
-    if (!miniature) {
+    if (!miniature && !captured) {
       const exhaust = kind === "boss" ? [ -16, 16 ] : kind === "player" ? [-6, 6] : [-10, 10];
       const flicker = 1 + Math.sin(elapsed * 22 + x * .1) * .18;
       ctx.globalCompositeOperation = "lighter";
@@ -887,7 +938,7 @@
     }
     const logicalSize = art.width / 4;
     ctx.drawImage(art, -logicalSize / 2, -logicalSize / 2, logicalSize, logicalSize);
-    if (kind === "player" && level === 5 && !miniature) {
+    if (kind === "player" && level === 5 && !miniature && !captured) {
       ctx.globalCompositeOperation = "lighter";
       ctx.strokeStyle = "#8af8ff"; ctx.lineWidth = .8;
       ctx.beginPath(); ctx.ellipse(0, 1, 6, 3, elapsed * 2, 0, Math.PI * 2); ctx.stroke();
@@ -904,7 +955,7 @@
       if (enemy.carrying && (!captureAnimation || captureAnimation.enemy !== enemy)) {
         ctx.strokeStyle = "#a9e5ff"; ctx.lineWidth = 2;
         ctx.beginPath(); ctx.moveTo(enemy.x, enemy.y + 11); ctx.lineTo(enemy.x, enemy.y + 20); ctx.stroke();
-        drawCraft("player", enemy.x, enemy.y + 32, 0, weapon);
+        drawCraft("player", enemy.x, enemy.y + 32, 0, weapon, false, true);
       }
     }
     if (enemy.carrier) {
@@ -1180,6 +1231,25 @@
         life: rand(.18, .48), maxLife: .48, size: rand(1.5, 3), color });
     }
   }
+  function enemyExplosion(enemy) {
+    const special = enemy.kind === "leader" || enemy.role === "captor";
+    const heavy = ["armored", "elite", "assault"].includes(enemy.kind);
+    const radius = special ? 31 : heavy ? 24 : 20;
+    const duration = special ? .72 : heavy ? .58 : .48;
+    bursts.push({ x: enemy.x, y: enemy.y, kind: "enemy", age: 0, radius, duration,
+      color: special ? "#f1b0ff" : "#ffc771", secondary: special ? 4 : 2 });
+    explosionSound(enemy.kind);
+    const count = special ? 32 : heavy ? 24 : 18;
+    for (let i = 0; i < count; i++) {
+      const angle = i / count * Math.PI * 2 + rand(-.13, .13);
+      const speed = rand(35, special ? 135 : 105), life = rand(.18, duration);
+      particles.push({ x: enemy.x, y: enemy.y, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed,
+        life, maxLife: life, size: i % 3 === 0 ? 3 : 1.6,
+        color: ["#fff8ce", "#ffc14e", "#ff6941", special ? "#c8a5ff" : "#f29a40"][i % 4] });
+    }
+    // Bound simultaneous debris without affecting the ship or boss animations.
+    if (particles.length > 1200) particles = particles.slice(-1200);
+  }
   function cinematicExplosion(x, y, kind) {
     const profile = {
       player: { duration: .8, radius: 34, color: "#8feeff" },
@@ -1228,7 +1298,7 @@
       ctx.strokeStyle = "#fff6d8"; ctx.lineWidth = 1;
       ctx.beginPath(); ctx.arc(0, 0, radius * .64, 0, Math.PI * 2); ctx.stroke();
       if (burst.kind !== "player") {
-        for (let i = 0; i < (burst.kind === "minister" ? 6 : 3); i++) {
+        for (let i = 0; i < (burst.kind === "enemy" ? burst.secondary : burst.kind === "minister" ? 6 : 3); i++) {
           const delay = .1 + i * .1;
           const phase = clamp((burst.age - delay) / .4, 0, 1);
           if (phase <= 0 || phase >= 1) continue;
@@ -1251,8 +1321,7 @@
       enemy.alive = false;
       const points = enemy.kind === "leader" ? 250 : enemy.kind === "assault" ? 100 : 50;
       score += points + (enemy.dive ? 25 : 0);
-      addExplosion(enemy.x, enemy.y, enemy.kind === "leader" ? "#bd78ed" : enemy.kind === "assault" ? "#f16b59" : "#e9c45a");
-      explosionSound(enemy.kind);
+      enemyExplosion(enemy);
       if (enemy.carrying) {
         const rescuedPosition = captureAnimation && captureAnimation.enemy === enemy
           ? capturedFighterPosition(captureAnimation) : { x: enemy.x, y: enemy.y + 32 };
@@ -1412,7 +1481,7 @@
         enemy.y = position.y;
         enemy.angle = Math.atan2(ahead.x - position.x, -(ahead.y - position.y));
         if (enemy.entry && flight.nextShot < flight.fireTimes.length && p >= flight.fireTimes[flight.nextShot]) {
-          // Every entrant has a staggered volley, away from the player's rear.
+          // Only the wing's designated shooter fires during entry.
           if (enemy.x > 12 && enemy.x < W - 12 && enemy.y < ship.y - 100) {
             enemyFire(enemy); flight.nextShot += 1;
           }
@@ -1505,7 +1574,10 @@
         else { score += 500; banner = "보너스 점수 +500"; bannerTime = 1.7; tone(760, .12, "sine", .05); }
       }
     }
-    for (const item of items) if (!item.caught && item.type === "rescue" && item.y >= H + 12) captivePending = true;
+    for (const item of items) if (!item.caught && item.type === "rescue" && item.y >= H + 12) {
+      captivePending = false;
+      banner = "구출 실패 · 기체를 잃었습니다"; bannerTime = 2;
+    }
     items = items.filter(item => !item.caught && item.y < H + 12);
 
     if (state !== "playing") return;
