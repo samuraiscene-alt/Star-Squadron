@@ -516,7 +516,7 @@
     ctx.font = "bold 10px ui-monospace, monospace";
     ctx.fillText(`STAGE ${String(stage).padStart(2, "0")}`, W / 2, 32);
     for (let i = 0; i < lives; i++) {
-      drawPixelMap(playerPixels, 22 + i * 17, 54, ["#e9edf2", "#72c9f2", "#3975c4", "#f45c53"], 0.72);
+      drawCraft("player", 22 + i * 17, 54, 0, 1, true);
     }
     const soundX = W - 21;
     ctx.strokeStyle = soundEnabled ? "#8390a0" : "#444d59";
@@ -541,27 +541,158 @@
       }
     }
   }
+  const craftArtwork = new Map();
+  function craftImage(kind, level = 1) {
+    const key = kind + "-" + level;
+    if (craftArtwork.has(key)) return craftArtwork.get(key);
+    const art = document.createElement("canvas");
+    art.width = art.height = kind === "boss" ? 256 : 224;
+    const paint = art.getContext("2d");
+    paint.translate(art.width / 2, art.height / 2);
+    paint.scale(4, 4);
+    paint.lineJoin = "round";
+    const colors = kind === "scout" ? ["#80601e", "#fff0a4", "#dba640"]
+      : kind === "assault" ? ["#692b38", "#ffbac0", "#dc4a5d"]
+      : kind === "leader" ? ["#452b68", "#e2c4ff", "#9c63dd"]
+      : kind === "boss" ? ["#193a4c", "#b0f7eb", "#388c8b"]
+      : level === 5 ? ["#263b67", "#e2efff", "#977ae9"] : ["#233c62", "#eef8ff", "#5f9bd0"];
+    const metal = paint.createLinearGradient(-17, -15, 16, 18);
+    metal.addColorStop(0, colors[1]); metal.addColorStop(.35, colors[2]); metal.addColorStop(1, colors[0]);
+    const hull = paint.createLinearGradient(-5, -20, 8, 18);
+    hull.addColorStop(0, "#f5fcff"); hull.addColorStop(.35, colors[2]); hull.addColorStop(1, colors[0]);
+    function panel(points, fill = metal, stroke = "#152739", width = .65) {
+      paint.beginPath(); paint.moveTo(points[0][0], points[0][1]);
+      for (const point of points.slice(1)) paint.lineTo(point[0], point[1]);
+      paint.closePath(); paint.fillStyle = fill; paint.fill();
+      if (stroke) { paint.strokeStyle = stroke; paint.lineWidth = width; paint.stroke(); }
+    }
+    function line(points, color = "rgba(225,250,255,.5)", width = .5) {
+      paint.beginPath(); paint.moveTo(points[0][0], points[0][1]);
+      for (const point of points.slice(1)) paint.lineTo(point[0], point[1]);
+      paint.strokeStyle = color; paint.lineWidth = width; paint.stroke();
+    }
+    function glass(x, y, w, h) {
+      const gradient = paint.createLinearGradient(x - w, y - h, x + w, y + h);
+      gradient.addColorStop(0, "#efffff"); gradient.addColorStop(.28, "#70e4ff");
+      gradient.addColorStop(.65, "#2470a3"); gradient.addColorStop(1, "#102b4c");
+      paint.beginPath(); paint.ellipse(x, y, w, h, 0, 0, Math.PI * 2);
+      paint.fillStyle = gradient; paint.fill(); paint.strokeStyle = "#d2f9ff"; paint.lineWidth = .5; paint.stroke();
+      line([[x - w * .4, y - h * .5], [x - w * .4, y + h * .2]], "#ffffff", .55);
+    }
+    function vent(x, y, count = 3) {
+      paint.fillStyle = "#132635";
+      for (let i = 0; i < count; i++) paint.fillRect(x, y + i * 1.5, 3, .7);
+    }
+    if (kind === "player") {
+      for (const side of [-1, 1]) {
+        panel([[side * 4, -6], [side * 18, 5], [side * 20, 13], [side * 8, 10], [side * 5, 16]], metal);
+        panel([[side * 7, 0], [side * 15, 6], [side * 13, 9], [side * 7, 7]], "#346992");
+        line([[side * 5, -4], [side * 17, 6], [side * 18, 11]]);
+        vent(side < 0 ? -14 : 11, 6);
+        panel([[side * 4, 8], [side * 8, 8], [side * 9, 17], [side * 4, 17]], "#23465f");
+        paint.fillStyle = "#96f6ff"; paint.fillRect(side * 6 - 1, 15, 2, 2);
+        if (level >= 2) {
+          panel([[side * 11 - 1.4, -8], [side * 11 + 1.4, -8], [side * 11 + 1.8, 7], [side * 11 - 1.8, 7]], level >= 3 ? "#b4d2e6" : "#698faa");
+          paint.fillStyle = "#142b40"; paint.fillRect(side * 11 - .9, -9, 1.8, 3);
+          if (level >= 3) {
+            line([[side * 13, -5], [side * 13, 5]], "#b8ebff", 1.1);
+            panel([[side * 8, 4], [side * 17, 7], [side * 17, 13], [side * 8, 11]], "#477cb0");
+          }
+        }
+      }
+      panel([[0, -19], [4, -10], [5, 9], [2, 15], [-2, 15], [-5, 9], [-4, -10]], hull);
+      glass(0, -5, 2.6, 5);
+      line([[0, -17], [0, -12]], "#ffffff", .7);
+      panel([[-3, 9], [3, 9], [2, 14], [-2, 14]], "#214359");
+      paint.fillStyle = "#e57064"; paint.fillRect(-1.2, 6, 2.4, 2);
+      if (level === 4) {
+        panel([[-2, -22], [2, -22], [2.6, -12], [-2.6, -12]], "#9bd4e5");
+        paint.fillStyle = "#b8ffff"; paint.fillRect(-1, -23, 2, 3);
+      }
+      if (level === 5) {
+        for (const side of [-1, 1]) {
+          panel([[side * 8, -4], [side * 20, -10], [side * 21, 7], [side * 15, 12], [side * 8, 6]], metal);
+          line([[side * 18, -7], [side * 18, 6]], "#98f6ff", 1);
+          glass(side * 14, 1, 1.6, 3);
+        }
+        paint.fillStyle = "#25315e"; paint.beginPath(); paint.arc(0, 1, 5.5, 0, Math.PI * 2); paint.fill();
+        glass(0, 1, 3.5, 3.5);
+      }
+    } else if (kind === "boss") {
+      for (const side of [-1, 1]) {
+        panel([[side * 6, -9], [side * 23, -14], [side * 29, -5], [side * 27, 13], [side * 15, 18], [side * 8, 9]], metal);
+        panel([[side * 13, -8], [side * 24, -9], [side * 23, 4], [side * 13, 7]], "#264658");
+        line([[side * 10, -7], [side * 25, -11], [side * 27, -4]], "#bbffed", .7);
+        vent(side < 0 ? -22 : 19, -4, 5);
+        panel([[side * 21 - 2, 2], [side * 21 + 2, 2], [side * 21 + 2, 20], [side * 21 - 2, 20]], "#497882");
+        paint.fillStyle = "#bafeee"; paint.fillRect(side * 21 - 1, 18, 2, 2);
+        glass(side * 12, 0, 2.2, 4);
+      }
+      panel([[0, -21], [8, -11], [10, 8], [5, 17], [-5, 17], [-10, 8], [-8, -11]], hull);
+      glass(0, -8, 4, 6);
+      panel([[-6, 4], [6, 4], [5, 11], [-5, 11]], "#263e4b");
+      paint.fillStyle = "#edbf66"; paint.beginPath(); paint.arc(0, 6, 3, 0, Math.PI * 2); paint.fill();
+      line([[-5, -16], [0, -20], [5, -16]], "#f8e4a8", .9);
+    } else {
+      const wide = kind === "leader";
+      const red = kind === "assault";
+      for (const side of [-1, 1]) {
+        const wing = wide ? 21 : red ? 19 : 18;
+        panel([[side * 3, -7], [side * (wing - 4), -12], [side * wing, -2],
+          [side * (wing - 1), 11], [side * 9, 8], [side * 4, 12]], metal);
+        panel([[side * 7, -5], [side * (wing - 3), -7], [side * (wing - 3), 3], [side * 8, 5]], "#233b59");
+        line([[side * 4, -7], [side * (wing - 5), -10], [side * (wing - 1), -2]]);
+        vent(side < 0 ? -(wing - 4) : wing - 7, -3);
+        panel([[side * 10 - 1, 5], [side * 10 + 1, 5], [side * 10 + 1, 13], [side * 10 - 1, 13]], colors[0]);
+        paint.fillStyle = wide ? "#b9f8ff" : red ? "#ffc5b9" : "#fff0a7";
+        paint.fillRect(side * 10 - .7, 11, 1.4, 2);
+        if (wide) glass(side * 13, -1, 1.7, 3);
+      }
+      panel([[0, -17], [5, -8], [6, 8], [2, 13], [-2, 13], [-6, 8], [-5, -8]], hull);
+      glass(0, -5, wide ? 3 : 2.4, 4);
+      line([[-2, 3], [0, 7], [2, 3]], colors[1], .6);
+      paint.fillStyle = colors[0]; paint.fillRect(-2, 8, 4, 3);
+      if (wide) {
+        paint.strokeStyle = "#f5d684"; paint.lineWidth = .7;
+        paint.beginPath(); paint.arc(0, 3, 4, 0, Math.PI * 2); paint.stroke();
+      }
+    }
+    craftArtwork.set(key, art);
+    return art;
+  }
+  function drawCraft(kind, x, y, angle = 0, level = 1, miniature = false) {
+    const art = craftImage(kind, level);
+    const size = miniature ? .32 : kind === "scout" ? .64 : kind === "assault" ? .69
+      : kind === "leader" ? .75 : kind === "boss" ? .96 : level >= 4 ? .88 : .82;
+    ctx.save(); ctx.translate(x, y); ctx.rotate(angle); ctx.scale(size, size);
+    ctx.imageSmoothingEnabled = true;
+    if (!miniature) {
+      const exhaust = kind === "boss" ? [ -16, 16 ] : kind === "player" ? [-6, 6] : [-10, 10];
+      const flicker = 1 + Math.sin(elapsed * 22 + x * .1) * .18;
+      ctx.globalCompositeOperation = "lighter";
+      for (const nozzle of exhaust) {
+        const glow = ctx.createRadialGradient(nozzle, 17, .5, nozzle, 18, 7);
+        glow.addColorStop(0, "rgba(170,250,255,.65)");
+        glow.addColorStop(.5, "rgba(65,145,245,.22)"); glow.addColorStop(1, "rgba(30,100,240,0)");
+        ctx.fillStyle = glow; ctx.beginPath(); ctx.ellipse(nozzle, 18, 4, 7 * flicker, 0, 0, Math.PI * 2); ctx.fill();
+      }
+      ctx.globalCompositeOperation = "source-over";
+    }
+    const logicalSize = art.width / 4;
+    ctx.drawImage(art, -logicalSize / 2, -logicalSize / 2, logicalSize, logicalSize);
+    if (kind === "player" && level === 5 && !miniature) {
+      ctx.globalCompositeOperation = "lighter";
+      ctx.strokeStyle = "#8af8ff"; ctx.lineWidth = .8;
+      ctx.beginPath(); ctx.ellipse(0, 1, 6, 3, elapsed * 2, 0, Math.PI * 2); ctx.stroke();
+    }
+    ctx.restore();
+  }
   function drawEnemy(enemy) {
     if (!enemy.alive) return;
     const blink = enemy.flash > 0 && Math.floor(elapsed * 24) % 2 === 0;
     if (blink) return;
     const bob = enemy.dive || enemy.entry ? 0 : Math.sin(elapsed * 2) * 1.5;
-    let map = scoutPixels;
-    let palette = ["#f5c54a", "#1f4276", "#f9e7a2"];
-    let cell = 1.65;
-    if (enemy.kind === "assault") {
-      map = assaultPixels;
-      palette = ["#ed4b4e", "#254d83", "#d8e6f7"];
-    } else if (enemy.kind === "leader") {
-      map = leaderPixels;
-      palette = ["#a85bd5", "#543886", "#75d9e9", "#ffe06b"];
-      cell = 1.8;
-    }
-    ctx.save();
-    ctx.translate(enemy.x, enemy.y + bob);
-    ctx.rotate(enemy.angle || 0);
-    drawPixelMap(map, 0, 0, palette, cell);
-    ctx.restore();
+    drawCraft(enemy.kind, enemy.x, enemy.y + bob, enemy.angle || 0);
     if (enemy.carrier) {
       ctx.fillStyle = "#fff1a3";
       ctx.beginPath();
@@ -582,7 +713,7 @@
   function drawBoss() {
     if (!boss) return;
     if (!(boss.flash > 0 && Math.floor(elapsed * 24) % 2 === 0)) {
-      drawPixelMap(bossPixels, boss.x, boss.y, ["#176e72", "#1c333d", "#e0ad4e", "#65e5dc"], 2.25);
+      drawCraft("boss", boss.x, boss.y, Math.PI);
     }
     const barW = 110;
     const y = 66;
@@ -598,29 +729,7 @@
   }
   function drawShip() {
     if (ship.invulnerable > 0 && Math.floor(elapsed * 13) % 2 === 0) return;
-    const map = weapon === 5 ? [
-      "0000000011100000000", "0000000123210000000", "0010001234321000100",
-      "0121012334332101210", "1232123334333212321", "1233233334333323321",
-      "0123332334332333210", "0012333234323332100", "0001233323233321000",
-      "0012232111112322100", "0122211000001122210", "0012100000000012100"
-    ] : playerPixels;
-    const palette = weapon === 5 ? ["#e5ffff", "#8667e9", "#247a9c", "#a1ffff"] : ["#e7efff", "#80d2f5", "#3975c4", "#e85355"];
-    const cell = weapon >= 4 ? 2 : 1.9;
-    if (weapon >= 3) {
-      ctx.fillStyle = weapon >= 5 ? "rgba(120,94,255,.18)" : "rgba(74,190,245,.14)";
-      ctx.beginPath();
-      ctx.arc(ship.x, ship.y, weapon >= 5 ? 26 : 21, 0, Math.PI * 2);
-      ctx.fill();
-    }
-    drawPixelMap(map, ship.x, ship.y, palette, cell);
-    if (weapon === 5) {
-      ctx.save(); ctx.globalCompositeOperation = "lighter";
-      ctx.strokeStyle = "#83f9ff"; ctx.lineWidth = 1;
-      ctx.beginPath(); ctx.ellipse(ship.x, ship.y - 2, 9, 5, elapsed * 2, 0, Math.PI * 2); ctx.stroke();
-      ctx.fillStyle = "#efffff";
-      ctx.beginPath(); ctx.arc(ship.x, ship.y - 2, 2.5 + Math.sin(elapsed * 8) * .5, 0, Math.PI * 2); ctx.fill();
-      ctx.restore();
-    }
+    drawCraft("player", ship.x, ship.y, 0, weapon);
   }
   function drawPlasma(shot) {
     ctx.save();
