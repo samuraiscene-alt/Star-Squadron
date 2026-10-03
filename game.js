@@ -54,8 +54,10 @@
   let fireButton = { x: W - 65, y: 0, pointer: null, pressed: false, flash: 0 };
   let soundEnabled = readNumber("ss-sound", 1) === 1;
   let audioContext = null;
-  let musicTimer = null;
-  let musicStep = 0;
+  let audioOutput = null;
+  let noiseBuffer = null;
+  const activeSoundSources = new Set();
+  let screenShake = 0;
   let fireCooldown = 0;
   let attackCooldown = stage === 1 ? 3.4 : 3.0;
   let stageClearTimer = 0;
@@ -112,11 +114,15 @@
     const ready = () => {
       if (!soundEnabled || !audioContext || audioContext.state !== "running") return;
       if (testSound) tone(880, .16, "sine", .06, true);
-      if (state === "paused" || state === "gameover") return;
-      startMusic();
+
     };
     try {
-      if (!audioContext || audioContext.state === "closed") audioContext = new AudioCtor();
+      if (!audioContext || audioContext.state === "closed") {
+        audioContext = new AudioCtor();
+        audioOutput = null; noiseBuffer = null;
+        activeSoundSources.clear();
+      }
+      prepareAudioOutput();
       if (audioContext.state === "running") ready();
       else {
         const resume = audioContext.resume();
@@ -129,42 +135,143 @@
       if (state === "playing") { banner = "소리를 켜려면 ♪ 버튼을 눌러 주세요"; bannerTime = 2; }
     }
   }
-  function startMusic() {
-    if (!musicTimer) {
-      const notes = [196, 247, 294, 247, 220, 262, 330, 262];
-      musicTimer = window.setInterval(() => {
-        if (!soundEnabled || state !== "playing" || !audioContext || audioContext.state !== "running") return;
-        const osc = audioContext.createOscillator();
-        const gain = audioContext.createGain();
-        osc.type = "square";
-        osc.frequency.value = notes[musicStep++ % notes.length];
-        gain.gain.setValueAtTime(0.0001, audioContext.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.018, audioContext.currentTime + 0.015);
-        gain.gain.exponentialRampToValueAtTime(0.0001, audioContext.currentTime + 0.13);
-        osc.connect(gain).connect(audioContext.destination);
-        osc.start();
-        osc.stop(audioContext.currentTime + 0.14);
-      }, 165);
+  function prepareAudioOutput() {
+    if (audioOutput) return;
+    audioOutput = audioContext.createGain();
+    audioOutput.gain.value = .7;
+    const limiter = audioContext.createDynamicsCompressor();
+    limiter.threshold.value = -18;
+    limiter.knee.value = 16;
+    limiter.ratio.value = 8;
+    limiter.attack.value = .003;
+    limiter.release.value = .16;
+    audioOutput.connect(limiter).connect(audioContext.destination);
+  }
+  function canPlaySound(preview = false) {
+    return soundEnabled && audioContext && audioContext.state === "running" && (preview || state === "playing");
+  }
+  function trackSound(source, nodes) {
+    activeSoundSources.add(source);
+    source.onended = () => {
+      activeSoundSources.delete(source);
+      for (const node of [source, ...nodes]) { try { node.disconnect(); } catch (_) {} }
+    };
+  }
+  function sweepVoice(from, to, duration, type, volume, delay = 0, warble = 0, preview = false) {
+    if (!canPlaySound(preview)) return;
+    const now = audioContext.currentTime + delay;
+    const oscillator = audioContext.createOscillator();
+    const gain = audioContext.createGain();
+    oscillator.type = type;
+    oscillator.frequency.setValueAtTime(from, now);
+    oscillator.frequency.exponentialRampToValueAtTime(Math.max(20, to), now + duration);
+    gain.gain.setValueAtTime(.0001, now);
+    gain.gain.linearRampToValueAtTime(volume, now + .004);
+    gain.gain.exponentialRampToValueAtTime(.0001, now + duration);
+    oscillator.connect(gain).connect(audioOutput);
+    trackSound(oscillator, [gain]);
+    if (warble) {
+      const modulation = audioContext.createOscillator();
+      const depth = audioContext.createGain();
+      modulation.frequency.value = 26;
+      depth.gain.value = warble;
+      modulation.connect(depth).connect(oscillator.frequency);
+      trackSound(modulation, [depth]);
+      modulation.start(now); modulation.stop(now + duration);
+    }
+    oscillator.start(now); oscillator.stop(now + duration);
+  }
+  function noiseVoice(duration, from, to, volume, filterType = "lowpass", delay = 0) {
+    if (!canPlaySound()) return;
+    if (!noiseBuffer) {
+      noiseBuffer = audioContext.createBuffer(1, Math.ceil(audioContext.sampleRate * 2.5), audioContext.sampleRate);
+      const data = noiseBuffer.getChannelData(0);
+      for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
+    }
+    const now = audioContext.currentTime + delay;
+    const source = audioContext.createBufferSource();
+    const filter = audioContext.createBiquadFilter();
+    const gain = audioContext.createGain();
+    source.buffer = noiseBuffer;
+    filter.type = filterType; filter.Q.value = .7;
+    filter.frequency.setValueAtTime(from, now);
+    filter.frequency.exponentialRampToValueAtTime(Math.max(30, to), now + duration);
+    gain.gain.setValueAtTime(.0001, now);
+    gain.gain.linearRampToValueAtTime(volume, now + .005);
+    gain.gain.exponentialRampToValueAtTime(.0001, now + duration);
+    source.connect(filter).connect(gain).connect(audioOutput);
+    trackSound(source, [filter, gain]);
+    source.start(now); source.stop(now + duration);
+  }
+  function tone(freq, duration = .07, type = "sine", volume = .04, preview = false) {
+    sweepVoice(freq, freq, duration, type, volume, 0, 0, preview);
+  }
+  function weaponSound(level) {
+    if (level <= 3) {
+      // Short muzzle crack and a low mechanical punch, rather than a pitched beep.
+      const machineGun = level === 3;
+      noiseVoice(machineGun ? .055 : .085, 4500, 1000, machineGun ? .15 : .18, "bandpass");
+      sweepVoice(machineGun ? 150 : 190, 55, .085, "triangle", .16);
+      if (level === 2) noiseVoice(.055, 3200, 800, .1, "bandpass", .012);
+    } else if (level === 4) {
+      sweepVoice(2400, 180, .24, "sawtooth", .065);
+      sweepVoice(1400, 260, .17, "sine", .075);
+      noiseVoice(.08, 2800, 900, .035, "bandpass");
+    } else {
+      // Layered energy pulse with a modulated core and a heavy, decaying tail.
+      sweepVoice(440, 85, .48, "sine", .16, 0, 30);
+      sweepVoice(130, 38, .6, "triangle", .23);
+      sweepVoice(760, 180, .28, "sawtooth", .045, .015, 45);
+      noiseVoice(.42, 2100, 160, .13, "bandpass", .02);
     }
   }
-  function tone(freq, duration = 0.07, type = "square", volume = 0.04, preview = false) {
-    if (!soundEnabled || !audioContext || audioContext.state !== "running" || (!preview && state !== "playing")) return;
-    const osc = audioContext.createOscillator();
-    const gain = audioContext.createGain();
-    const now = audioContext.currentTime;
-    osc.type = type;
-    osc.frequency.setValueAtTime(freq, now);
-    gain.gain.setValueAtTime(volume, now);
-    gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
-    osc.connect(gain).connect(audioContext.destination);
-    osc.start(now);
-    osc.stop(now + duration);
+  function missileSound() {
+    noiseVoice(.14, 1700, 450, .05, "bandpass");
+    sweepVoice(250, 90, .15, "triangle", .035);
+  }
+  function impactSound(heavy = false) {
+    noiseVoice(.035, heavy ? 1800 : 3500, 900, .055, "bandpass");
+  }
+  function explosionSound(kind) {
+    if (kind === "boss") {
+      noiseVoice(1.8, 2200, 65, .38);
+      sweepVoice(90, 25, 1.25, "sine", .36);
+      noiseVoice(1.1, 1200, 90, .25, "lowpass", .22);
+      sweepVoice(160, 32, .9, "triangle", .2, .25);
+      noiseVoice(.65, 2700, 180, .13, "bandpass", .5);
+    } else if (kind === "leader") {
+      noiseVoice(.75, 2300, 110, .26);
+      sweepVoice(115, 32, .65, "sine", .26);
+      noiseVoice(.4, 1200, 160, .12, "lowpass", .1);
+      sweepVoice(640, 140, .28, "triangle", .075, .08);
+    } else if (kind === "player") {
+      noiseVoice(.65, 2200, 100, .29);
+      sweepVoice(130, 28, .6, "sine", .29);
+      noiseVoice(.35, 3500, 450, .12, "bandpass", .035);
+    } else if (kind === "assault") {
+      noiseVoice(.34, 2100, 150, .2);
+      sweepVoice(140, 40, .3, "triangle", .18);
+    } else if (kind === "plasma") {
+      noiseVoice(.42, 2600, 120, .2);
+      sweepVoice(230, 42, .42, "sine", .22, 0, 22);
+    } else {
+      noiseVoice(.22, 2800, 250, .14);
+      sweepVoice(170, 55, .2, "triangle", .13);
+    }
+  }
+  function stopSounds() {
+    for (const source of activeSoundSources) { try { source.stop(); } catch (_) {} }
+    activeSoundSources.clear();
+  }
+  function playerImpactFeedback() {
+    screenShake = .18;
+    try { if (typeof navigator.vibrate === "function") navigator.vibrate(35); } catch (_) {}
   }
   function toggleSound() {
     soundEnabled = !soundEnabled;
     writeNumber("ss-sound", soundEnabled ? 1 : 0);
     if (soundEnabled) initAudio(true);
-    else stopMusic();
+    else stopSounds();
   }
 
   function makeEnemy(kind, col, row, x, y) {
@@ -237,6 +344,8 @@
   }
   function beginGame() {
     resetControls();
+    stopSounds();
+    screenShake = 0;
     score = 0;
     stage = 1;
     lives = 3;
@@ -343,6 +452,7 @@
   }
 
   function enemyFire(enemy) {
+    missileSound();
     const speed = stage === 1 ? 100 : 125 + stage * 4;
     const baseAngle = Math.atan2(ship.y - enemy.y, ship.x - enemy.x);
     const angles = stage === 1 ? [0] : enemy.kind === "leader" ? [-0.3, -0.15, 0, 0.15, 0.3]
@@ -355,6 +465,7 @@
   }
   function bossFire() {
     if (!boss) return;
+    missileSound();
     const spread = [-0.48, -0.24, 0, 0.24, 0.48];
     spread.forEach(offset => enemyShots.push({
       x: boss.x, y: boss.y + 17, vx: Math.sin(offset) * 155,
@@ -670,13 +781,13 @@
     if (!enemy.alive) return;
     enemy.hp -= amount;
     enemy.flash = 0.12;
-    tone(enemy.kind === "leader" ? 260 : 420, .045, "square", .025);
+    if (enemy.hp > 0) impactSound(enemy.kind === "leader");
     if (enemy.hp <= 0) {
       enemy.alive = false;
       const points = enemy.kind === "leader" ? 250 : enemy.kind === "assault" ? 100 : 50;
       score += points + (enemy.dive ? 25 : 0);
       addExplosion(enemy.x, enemy.y, enemy.kind === "leader" ? "#bd78ed" : enemy.kind === "assault" ? "#f16b59" : "#e9c45a");
-      tone(150, .09, "triangle", .045);
+      explosionSound(enemy.kind);
       if (enemy.carrier) {
         items.push({ x: enemy.x, y: enemy.y + 8, vy: 105, level: Math.min(5, weapon + 1) });
       }
@@ -686,11 +797,11 @@
     if (!boss) return;
     boss.hp -= amount;
     boss.flash = .1;
-    tone(230, .04, "square", .025);
+    if (boss.hp > 0) impactSound(true);
     if (boss.hp <= 0) {
       score += 2500 + stage * 100;
       addExplosion(boss.x, boss.y, "#68dfd3", 28);
-      tone(110, .25, "sawtooth", .05);
+      explosionSound("boss");
       boss = null;
     }
   }
@@ -707,7 +818,7 @@
     } else {
       playerShots.push({ x: ship.x, y: ship.y - 16, vy: -250, type: "plasma", r: 7, ttl: 3 });
     }
-    tone(weapon >= 4 ? 620 : 520, .035, "square", .018);
+    weaponSound(weapon);
   }
   function upgradeWeapon(level) {
     if (level <= weapon) return;
@@ -727,22 +838,19 @@
     ship.x = W / 2;
     enemyShots = [];
     addExplosion(ship.x, ship.y, "#8bd8f2", 14);
-    tone(95, .32, "sawtooth", .055);
+    explosionSound("player");
+    playerImpactFeedback();
     if (lives <= 0) {
       state = "gameover";
       if (score > highScore) {
         highScore = score;
         writeNumber("ss-high", highScore);
       }
-      stopMusic();
     }
-  }
-  function stopMusic() {
-    if (musicTimer) window.clearInterval(musicTimer);
-    musicTimer = null;
   }
 
   function update(dt) {
+    if (state !== "paused") screenShake = Math.max(0, screenShake - dt);
     if (state !== "playing") return;
     elapsed += dt;
     if (bannerTime > 0) bannerTime -= dt;
@@ -842,6 +950,7 @@
           shot.exploded = true; shot.ttl = .16;
           addExplosion(shot.x, shot.y, "#82f8ff", 22);
           addExplosion(shot.x, shot.y, "#a68aff", 10);
+          explosionSound("plasma");
           enemies.forEach(e => { if (e.alive && distance(e.x, e.y, shot.x, shot.y) < 44) damageEnemy(e, 2); });
           if (boss && distance(boss.x, boss.y, shot.x, shot.y) < 54) damageBoss(3);
         }
@@ -877,6 +986,11 @@
   }
 
   function render(dt) {
+    ctx.save();
+    if (screenShake > 0 && state !== "paused") {
+      const strength = screenShake / .18 * 2;
+      ctx.translate(Math.sin(screenShake * 170) * strength, Math.cos(screenShake * 145) * strength);
+    }
     drawStars(dt);
     drawHud();
     enemies.forEach(drawEnemy);
@@ -890,6 +1004,7 @@
     if (state === "title") drawOverlay("STAR SQUADRON", "편대 공격을 돌파하고 무기를 강화하세요", "화면을 눌러 시작 · 좌우 조이스틱 / 발사 버튼");
     if (state === "gameover") drawOverlay("GAME OVER", `SCORE ${String(score).padStart(6, "0")}  ·  BEST ${String(highScore).padStart(6, "0")}`, "화면을 눌러 다시 시작");
     if (state === "paused") drawOverlay("PAUSED", "게임이 잠시 멈췄습니다", "이 안내창을 눌러 계속");
+    ctx.restore();
   }
 
   function resetControls() {
@@ -908,7 +1023,7 @@
     if (state !== "playing") return;
     state = "paused";
     resetControls();
-    stopMusic();
+    stopSounds();
   }
   function resumeGame() {
     if (state !== "paused") return;
