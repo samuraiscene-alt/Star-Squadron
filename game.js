@@ -6,6 +6,7 @@
   const W = 360;
   const FINAL_STAGE = 100;
   const WEAPON_EVENTS = { 10: 2, 20: 3, 30: 4, 40: 5 };
+  const cinema = window.SquadronCinema;
   const keys = new Set();
   const useTouchInput = "ontouchstart" in window;
 
@@ -413,6 +414,7 @@
     }
   }
   function beginGame() {
+    if (cinema) cinema.hide();
     resetControls();
     stopSounds();
     screenShake = 0;
@@ -1098,10 +1100,34 @@
   }
   function finishContinue() {
     if (state !== "continue") return;
-    state = "gameover";
     continueDeadline = 0;
     resetControls();
     stopSounds();
+    state = cinema ? "ending" : "gameover";
+    if (cinema) cinema.playEnding();
+  }
+  function startOpening() {
+    if (state !== "title") return;
+    if (!cinema) { beginGame(); return; }
+    resetControls(); stopSounds();
+    state = "intro";
+    initAudio();
+    cinema.playOpening();
+  }
+  function finishEnding() {
+    if (state !== "ending") return;
+    state = "gameover";
+    resetControls(); stopSounds();
+    enemies = []; boss = null;
+    playerShots = []; enemyShots = []; items = []; particles = []; bursts = [];
+    dualFighter = false; captivePending = false; captureAnimation = null;
+    lives = 0; screenShake = 0;
+  }
+  function returnHome() {
+    resetControls(); stopSounds();
+    state = "title";
+    continueDeadline = 0;
+    if (cinema) cinema.showHome();
   }
   function continueGame() {
     if (state !== "continue") return;
@@ -1512,10 +1538,10 @@
     drawBursts();
     drawShip();
     drawControls();
-    if (state === "title") drawOverlay("STAR SQUADRON");
+    if (state === "title" && !cinema) drawOverlay("STAR SQUADRON");
     if (state === "victory") drawOverlay("CLEAR");
     if (state === "continue") drawContinue();
-    if (state === "gameover") drawOverlay("GAME OVER");
+    if (state === "gameover" && !cinema) drawOverlay("GAME OVER");
     if (state === "paused") drawOverlay("PAUSED");
     ctx.restore();
   }
@@ -1572,7 +1598,9 @@
       if (p.x >= 26 && p.x <= W - 26 && p.y >= H * .36 && p.y <= H * .36 + 140) resumeGame();
       return;
     }
-    if (state === "title" || state === "gameover" || state === "victory") beginGame();
+    if (state === "title") { if (!cinema) beginGame(); return; }
+    if (state === "gameover") { if (!cinema) beginGame(); return; }
+    if (state === "victory") beginGame();
     if (state !== "playing") return;
     initAudio();
     if (distance(p.x, p.y, joy.x, joy.y) < 48 && joy.pointer === null) {
@@ -1645,8 +1673,14 @@
       else if (!event.repeat && event.key.toLowerCase() === "r") beginGame();
       return;
     }
-    if (event.key === "Enter") {
-      if (state === "title" || state === "gameover" || state === "victory") beginGame();
+    if (state === "intro" || state === "ending") {
+      if (!event.repeat && event.key === "Escape" && cinema) cinema.skip();
+      return;
+    }
+    if (event.key === "Enter" && !event.repeat) {
+      if (state === "title") startOpening();
+      else if (state === "gameover") { if (cinema) returnHome(); else beginGame(); }
+      else if (state === "victory") beginGame();
       else if (state === "paused") resumeGame();
     }
     if (!event.repeat && event.key.toLowerCase() === "m") toggleSound();
@@ -1669,6 +1703,7 @@
     render(state === "paused" ? 0 : dt);
     requestAnimationFrame(frame);
   }
+  if (cinema) cinema.init({ opening: startOpening, start: beginGame, ended: finishEnding, home: returnHome, soundEnabled: () => soundEnabled });
   requestAnimationFrame(frame);
 
   if ("serviceWorker" in navigator && location.protocol !== "file:") {

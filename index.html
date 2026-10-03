@@ -11,13 +11,22 @@
   <link rel="manifest" href="manifest.webmanifest?v=15">
   <link rel="icon" href="icons/icon-512-v15.png" type="image/png">
   <link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon-v15.png">
-  <link rel="stylesheet" href="style.css?v=16">
+  <link rel="stylesheet" href="style.css?v=18">
 </head>
 <body>
   <main id="game-shell" aria-label="Star Squadron 아케이드 게임">
     <canvas id="game" aria-label="게임 화면. 왼쪽 조이스틱으로 좌우 이동하고 오른쪽 버튼으로 발사합니다."></canvas>
+    <section id="cinema" data-mode="home" aria-label="출격 및 게임 종료 화면">
+      <img id="cinema-poster" src="media/base-v18.jpg" alt="지구 기지에서 출격을 기다리는 조종사와 기체">
+      <video id="cinema-video" playsinline webkit-playsinline preload="auto" hidden></video>
+      <h1 id="cinema-title">STAR SQUADRON</h1>
+      <button id="start-button" type="button">시작하기</button>
+      <button id="skip-button" type="button" hidden>SKIP</button>
+      <button id="home-button" type="button" hidden>처음으로</button>
+    </section>
     <div id="rotate-hint" aria-hidden="true">↻</div>
   </main>
-  <script src="game.js?v=17" defer></script>
+  <script src="cinema.js?v=18" defer></script>
+  <script src="game.js?v=18" defer></script>
 </body>
 </html>
