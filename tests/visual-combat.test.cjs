@@ -1,13 +1,13 @@
 const fs=require('fs'),vm=require('vm'),assert=require('assert'),{createCanvas}=require('@napi-rs/canvas');
 const canvas=createCanvas(360,780);canvas.addEventListener=()=>{};canvas.getBoundingClientRect=()=>({left:0,top:0,width:360,height:780});
 const sandbox={Math,Set,Map,window:{devicePixelRatio:1,addEventListener(){},setTimeout(){}},document:{getElementById:()=>canvas,createElement:()=>createCanvas(1,1),addEventListener(){}},navigator:{},location:{protocol:'file:'},localStorage:{getItem:()=>null,setItem(){}},requestAnimationFrame(){}};
-let source=fs.readFileSync(require('path').join(__dirname,'../game.js'),'utf8').replace(/\}\)\(\);\s*$/,`globalThis.g={flightPosition,capturedCraftImage,craftImage,beginGame,startStage,launchGroupAttack,captureFighter,capturedFighterPosition,damageEnemy,update,render,get:()=>({enemies,bursts,particles,ship,captureAnimation,items,dualFighter}),setStage:s=>{stage=s;startStage()}};})();`);
+let source=fs.readFileSync(require('path').join(__dirname,'../game.js'),'utf8').replace(/\}\)\(\);\s*$/,`globalThis.g={combatDifficulty,flightPosition,capturedCraftImage,craftImage,beginGame,startStage,launchGroupAttack,captureFighter,capturedFighterPosition,damageEnemy,update,render,get:()=>({enemies,bursts,particles,ship,captureAnimation,items,dualFighter}),setStage:s=>{stage=s;startStage()}};})();`);
 vm.runInNewContext(source,sandbox);const g=sandbox.g;
-for(const stage of [1,29,31,61,91,99]){
+for(const stage of [1,5,6,15,16,29,31,32,51,61,81,91,99]){
  g.beginGame();g.setStage(stage);g.get().ship.invulnerable=999;for(let i=0;i<180;i++)g.update(1/60);
  for(const e of g.get().enemies){e.dive=null;e.beam=null;}
- g.launchGroupAttack();let flying=g.get().enemies.filter(e=>e.dive);assert(new Set(flying.map(e=>e.dive.route)).size>=2,'several simultaneous routes');
- if(stage===1){
+ g.launchGroupAttack();let flying=g.get().enemies.filter(e=>e.dive);assert(new Set(flying.map(e=>e.dive.route)).size >= (stage<=5?1:2),'staged simultaneous routes');
+ if(stage===32){
   const wrapped=flying.find(e=>e.dive.wrapReturn);assert(wrapped,'bottom exit wing');
   const f=wrapped.dive;const split=4/f.route.length;
   assert(g.flightPosition(f,split-.00001).y>780,'exit completely below screen');
@@ -16,7 +16,8 @@ for(const stage of [1,29,31,61,91,99]){
   assert(flying.some(e=>!e.dive.wrapReturn),'looping return retained');
  }
  for(let i=0;i<1400;i++){
-  g.update(1/60);const flying=g.get().enemies.filter(e=>e.alive&&e.dive);assert(flying.length<=(stage<26?12:stage<51?15:18));assert(flying.filter(e=>e.dive.fireTimes.length).length<=Math.min(5,2+Math.floor((stage-1)/30)));
+  g.update(1/60);const flying=g.get().enemies.filter(e=>e.alive&&e.dive);assert(flying.length<=g.combatDifficulty().maxFlying);assert(flying.filter(e=>e.dive.fireTimes.length).length<=g.combatDifficulty().shooters);
+  if(stage<30&&g.get().enemies.some(e=>e.alive&&e.beam))assert.equal(flying.length,0,"early beam does not overlap attack");
   for(const e of flying)assert(Number.isFinite(e.x)&&Number.isFinite(e.y));
  }
 }
@@ -31,4 +32,4 @@ for(let i=0;i<33;i++)g.update(1/60);g.render(0);fs.writeFileSync('/tmp/v19-spinn
 for(let i=0;i<40;i++)g.update(1/60);g.render(0);fs.writeFileSync('/tmp/v19-gray.png',canvas.toBuffer('image/png'));
 g.damageEnemy(captor,999);let rescue=g.get().items.find(e=>e.type==='rescue');assert(rescue);g.update(.35);rescue.y=g.get().ship.y;g.get().ship.x=rescue.x;g.update(.01);assert(g.get().dualFighter);g.render(0);fs.writeFileSync('/tmp/v19-rescued.png',canvas.toBuffer('image/png'));
 g.beginGame();g.get().ship.invulnerable=999;for(let i=0;i<180;i++)g.update(1/60);for(const enemy of g.get().enemies.slice(0,3))g.damageEnemy(enemy,999);assert.equal(g.get().bursts.length,3);assert(g.get().particles.length>=90);g.update(.15);g.render(0);fs.writeFileSync('/tmp/v19-bursts.png',canvas.toBuffer('image/png'));g.update(1);assert.equal(g.get().bursts.length,0);
-console.log('PASS: simultaneous varied routes, bounded flyers/shooters in six stages, true grayscale for all five weapons, rotating pull/gray docking/color rescue renders, layered bounded explosions');
+console.log('PASS: simultaneous varied routes, bounded flyers/shooters in thirteen stages, true grayscale for all five weapons, rotating pull/gray docking/color rescue renders, layered bounded explosions');

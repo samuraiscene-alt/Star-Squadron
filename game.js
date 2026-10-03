@@ -396,7 +396,7 @@
         ];
         squad.forEach(e => {
           e.entry = { age: -row * 0.18, duration: 2.0, route, offsetX: e.baseX - centerX, offsetY: 0,
-            fireTimes: [1, 3, 2, 4, 0].slice(0, Math.min(5, 2 + Math.floor((stage - 1) / 30))).includes(row) && e.col === (row % 2 ? 2 : 0) ? (stage >= 30 ? [.36, .64] : [.42]) : [], nextShot: 0 };
+            fireTimes: [1, 3, 2, 4, 0].slice(0, combatDifficulty().shooters).includes(row) && e.col === (row % 2 ? 2 : 0) ? (stage >= 30 ? [.36, .64] : [.42]) : [], nextShot: 0 };
           const p = flightPosition(e.entry, 0);
           e.x = p.x; e.y = p.y;
         });
@@ -456,14 +456,22 @@
       y: v * v * v * points[0][1] + 3 * v * v * u * points[1][1] + 3 * v * u * u * points[2][1] + u * u * u * points[3][1] + flight.offsetY * spread
     };
   }
+  function combatDifficulty() {
+    const maxFlying = stage <= 5 ? 3 : stage <= 15 ? 5 : stage < 30 ? 8 : stage <= 50 ? 12 : stage <= 80 ? 15 : 18;
+    const shooters = stage <= 15 ? 1 : stage <= 50 ? 2 : stage <= 80 ? 3 : stage <= 90 ? 4 : 5;
+    return { maxFlying, shooters, wings: stage <= 5 ? 1 : stage < 30 ? 2 : 3,
+      interval: stage <= 5 ? 4 : stage <= 15 ? 3.5 : stage < 30 ? 3 : Math.max(2.1, 5 - (stage - 1) * .029),
+      flightDuration: stage <= 5 ? 8 : stage <= 15 ? 7.5 : stage < 30 ? 7 : Math.max(4.7, 6.2 - (stage - 1) * .015),
+      missileSpeed: stage < 30 ? 75 + (stage - 1) * 2 : 100 + (stage - 1) * 1.15 };
+  }
   function launchGroupAttack() {
     // Several wings fly at once; only a small shared pool may fire missiles.
-    for (let wing = 0; wing < 3; wing++) launchFlightWing();
+    for (let wing = 0; wing < combatDifficulty().wings; wing++) launchFlightWing();
   }
   function launchFlightWing() {
-    if (enemies.some(e => e.alive && e.entry)) return;
+    if (enemies.some(e => e.alive && (e.entry || (stage < 30 && e.beam)))) return;
     const active = enemies.filter(e => e.alive && e.dive);
-    const maxFlying = stage < 26 ? 12 : stage < 51 ? 15 : 18;
+    const maxFlying = combatDifficulty().maxFlying;
     if (active.length >= maxFlying) return;
     const order = ["leader", "scout", "interceptor", "assault", "leader", "armored", "phantom", "elite", "scout"];
     let available = [];
@@ -559,14 +567,14 @@
       route = [route[0], ...attack, ...arrival];
     }
     const pattern = (groupAttackIndex - 1) % flightModes(stage);
-    const shooterLimit = Math.min(5, 2 + Math.floor((stage - 1) / 30));
+    const shooterLimit = combatDifficulty().shooters;
     const shooterSlots = Math.max(0, shooterLimit - active.filter(e => e.dive.fireTimes.length > 0).length);
     squad.forEach((enemy, index) => {
       enemy.dive = { age: kind === "leader" ? 0 : -index * .16,
-        duration: enemy.carrying ? 3.6 : Math.max(4.7, 6.2 - (stage - 1) * .015) + (pattern === 1 || pattern >= 3 ? 1 : 0),
+        duration: enemy.carrying ? (stage < 30 ? 6 : 3.6) : combatDifficulty().flightDuration + (pattern === 1 || pattern >= 3 ? 1 : 0),
         route, wrapReturn, offsetX: enemy.x - cx, offsetY: enemy.y - cy, rearAttack: kind === "leader",
         ribbon: kind !== "leader",
-        fireTimes: index >= shooterSlots ? [] : kind === "leader" ? (stage >= 10 ? [.18, .28, .68] : [.18, .28]) : stage >= 60 ? [.24, .42, .62] : [.34, .55],
+        fireTimes: index >= shooterSlots ? [] : stage <= 5 ? [.34] : kind === "leader" ? (stage >= 10 ? [.18, .28, .68] : [.18, .28]) : stage >= 60 ? [.24, .42, .62] : [.34, .55],
         nextShot: 0 };
       enemy.shot = false;
     });
@@ -612,13 +620,13 @@
         const t = clamp(b.age / .85, 0, 1);
         enemy.x = b.fromX + (enemy.baseX - b.fromX) * t;
         enemy.y = b.fromY + (enemy.baseY - b.fromY) * t;
-        if (t >= 1) { enemy.beam = null; enemy.beamCooldown = 6.5; }
+        if (t >= 1) { enemy.beam = null; enemy.beamCooldown = stage < 30 ? 12 : 6.5; }
       }
       return true;
     }
     if (enemy.entry || enemy.dive || enemy.carrying || dualFighter || captivePending || lives <= 1) return false;
     enemy.beamCooldown -= dt;
-    if (enemy.beamCooldown <= 0 && !enemies.some(e => e.alive && (e.entry || e.beam))) {
+    if (enemy.beamCooldown <= 0 && !enemies.some(e => e.alive && (e.entry || e.beam || (stage < 30 && e.dive)))) {
       enemy.beam = { phase: "approach", age: 0, fromX: enemy.x, fromY: enemy.y,
         x: clamp(ship.x, 55, W - 55), y: Math.max(230, ship.y - 180) };
       banner = "납치 빔 접근 · 좌우로 피하거나 특수기를 격추!"; bannerTime = 2;
@@ -666,7 +674,7 @@
   }
   function enemyFire(enemy) {
     missileSound();
-    const speed = 100 + (stage - 1) * 1.15;
+    const speed = combatDifficulty().missileSpeed;
     const baseAngle = Math.atan2(ship.y - enemy.y, ship.x - enemy.x);
     const heavy = ["assault", "armored", "elite"].includes(enemy.kind);
     const angles = stage < 20 ? [0] : enemy.kind === "leader" ? [-.24, 0, .24]
@@ -1446,10 +1454,12 @@
     }
 
     if (!bossStage) {
-      attackCooldown -= dt;
+      const earlyAttackBusy = stage < 30 && enemies.some(e => e.alive && (e.entry || e.dive || e.beam));
+      if (earlyAttackBusy) attackCooldown = combatDifficulty().interval;
+      else attackCooldown -= dt;
       if (attackCooldown <= 0) {
         launchGroupAttack();
-        attackCooldown = Math.max(2.1, 5.0 - (stage - 1) * .029);
+        attackCooldown = combatDifficulty().interval;
       }
     } else if (boss) {
       boss.age += dt;
