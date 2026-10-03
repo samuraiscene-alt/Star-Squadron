@@ -505,9 +505,9 @@
 
   function captureFighter(enemy) {
     if (dualFighter || captivePending || ship.invulnerable > 0 || lives <= 1 || respawnDelay > 0) return;
-    captureAnimation = { x: ship.x, y: ship.y, toX: enemy.x, toY: enemy.y + 26, age: 0 };
+    captureAnimation = { x: ship.x, y: ship.y, enemy, age: 0, duration: 1.1 };
     captivePending = true; enemy.carrying = true;
-    lives -= 1; respawnDelay = 1.1; ship.invulnerable = 2.6;
+    lives -= 1; respawnDelay = 1.5; ship.invulnerable = 2.6;
     enemyShots = []; resetControls(); ship.x = W / 2;
     banner = "기체 납치! 보라색 특수기를 격추해서 구출하세요"; bannerTime = 3;
     sweepVoice(780, 150, .65, "sine", .075, 0, 25);
@@ -518,7 +518,7 @@
       if (enemy.y < -55) { enemy.alive = false; captivePending = true; }
       return true;
     }
-    if (enemy.carrying && !enemies.some(e => e.alive && e !== enemy)) {
+    if (enemy.carrying && !captureAnimation && !enemies.some(e => e.alive && e !== enemy)) {
       enemy.entry = null; enemy.dive = null; enemy.beam = null; enemy.escape = { age: 0 };
       banner = "납치범 도주 · 다음 일반 판에서 구출 재도전"; bannerTime = 2;
       return true;
@@ -534,7 +534,11 @@
         if (b.age >= .8) { b.phase = "active"; b.age = 0; sweepVoice(220, 440, .6, "sine", .04, 0, 18); }
       } else if (b.phase === "active") {
         if (Math.abs(ship.x - enemy.x) < 36 && ship.y > enemy.y + 35 && ship.y < enemy.y + 210) captureFighter(enemy);
-        if (enemy.carrying || b.age >= 2.1) { b.phase = "return"; b.age = 0; b.fromX = enemy.x; b.fromY = enemy.y; }
+        if (enemy.carrying) { b.phase = "lifting"; b.age = 0; }
+        else if (b.age >= 2.1) { b.phase = "return"; b.age = 0; b.fromX = enemy.x; b.fromY = enemy.y; }
+      } else if (b.phase === "lifting") {
+        // Keep the beam and captor still until the captured fighter is docked.
+        if (!captureAnimation) { b.phase = "return"; b.age = 0; b.fromX = enemy.x; b.fromY = enemy.y; }
       } else {
         const t = clamp(b.age / .85, 0, 1);
         enemy.x = b.fromX + (enemy.baseX - b.fromX) * t;
@@ -553,10 +557,18 @@
     }
     return false;
   }
+  function capturedFighterPosition(animation) {
+    const t = clamp(animation.age / animation.duration, 0, 1);
+    const vertical = t * t * (3 - 2 * t);
+    const centerT = clamp(t / .3, 0, 1);
+    const horizontal = centerT * centerT * (3 - 2 * centerT);
+    return { x: animation.x + (animation.enemy.x - animation.x) * horizontal,
+      y: animation.y + (animation.enemy.y + 32 - animation.y) * vertical };
+  }
   function drawCaptureBeams() {
     for (const enemy of enemies) {
-      if (!enemy.alive || !enemy.beam || !["warning", "active"].includes(enemy.beam.phase)) continue;
-      const active = enemy.beam.phase === "active";
+      if (!enemy.alive || !enemy.beam || !["warning", "active", "lifting"].includes(enemy.beam.phase)) continue;
+      const active = enemy.beam.phase !== "warning";
       ctx.save(); ctx.translate(enemy.x, enemy.y + 14);
       const glow = ctx.createLinearGradient(0, 0, 0, 200);
       glow.addColorStop(0, active ? "rgba(148,100,255,.32)" : "rgba(148,100,255,.05)");
@@ -572,8 +584,8 @@
       ctx.restore();
     }
     if (captureAnimation) {
-      const a = captureAnimation, t = clamp(a.age / .7, 0, 1);
-      drawCraft("player", a.x + (a.toX - a.x) * t, a.y + (a.toY - a.y) * t, t * Math.PI * 4, weapon);
+      const position = capturedFighterPosition(captureAnimation);
+      drawCraft("player", position.x, position.y, 0, weapon);
     }
   }
 
@@ -854,7 +866,11 @@
     if (enemy.role === "captor") {
       ctx.strokeStyle = "#d6a9ff"; ctx.lineWidth = 1.2;
       ctx.beginPath(); ctx.ellipse(enemy.x, enemy.y, 18, 12, elapsed * 1.5, 0, Math.PI * 2); ctx.stroke();
-      if (enemy.carrying && !captureAnimation) drawCraft("player", enemy.x, enemy.y + 26, Math.PI, weapon, true);
+      if (enemy.carrying && (!captureAnimation || captureAnimation.enemy !== enemy)) {
+        ctx.strokeStyle = "#a9e5ff"; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.moveTo(enemy.x, enemy.y + 11); ctx.lineTo(enemy.x, enemy.y + 20); ctx.stroke();
+        drawCraft("player", enemy.x, enemy.y + 32, 0, weapon);
+      }
     }
     if (enemy.carrier) {
       ctx.fillStyle = enemy.carrier === "life" ? "#92ecff" : "#fff1a3";
@@ -1134,8 +1150,11 @@
       addExplosion(enemy.x, enemy.y, enemy.kind === "leader" ? "#bd78ed" : enemy.kind === "assault" ? "#f16b59" : "#e9c45a");
       explosionSound(enemy.kind);
       if (enemy.carrying) {
+        const rescuedPosition = captureAnimation && captureAnimation.enemy === enemy
+          ? capturedFighterPosition(captureAnimation) : { x: enemy.x, y: enemy.y + 32 };
+        if (captureAnimation && captureAnimation.enemy === enemy) captureAnimation = null;
         enemy.carrying = false; captivePending = false;
-        items.push({ x: enemy.x, y: enemy.y + 26, vy: 95, type: "rescue" });
+        items.push({ x: rescuedPosition.x, y: rescuedPosition.y, vy: 95, type: "rescue" });
         banner = "기체 구출! 내려오는 기체를 받아주세요"; bannerTime = 2;
       }
       if (enemy.carrier) {
@@ -1222,7 +1241,7 @@
     updateEffects(dt);
     if (captureAnimation) {
       captureAnimation.age += dt;
-      if (captureAnimation.age >= .7) captureAnimation = null;
+      if (captureAnimation.age >= captureAnimation.duration) captureAnimation = null;
     }
     if (state !== "playing") return;
     elapsed += dt;

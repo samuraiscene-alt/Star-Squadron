@@ -4,7 +4,7 @@ const grad={addColorStop(){}};
 const ctx=new Proxy({createRadialGradient:()=>grad,createLinearGradient:()=>grad,measureText:()=>({width:100})},{get:(o,k)=>k in o?o[k]:()=>{}});
 const canvas=native?native.createCanvas(360,780):{getContext:()=>ctx};canvas.addEventListener=()=>{};canvas.getBoundingClientRect=()=>({left:0,top:0,width:360,height:780});
 const sandbox={console,Math,Set,Map,window:{innerWidth:360,innerHeight:780,devicePixelRatio:1,addEventListener(){},setTimeout(){}},document:{getElementById:()=>canvas,createElement:()=>native?native.createCanvas(1,1):{getContext:()=>ctx},addEventListener(){}},navigator:{},location:{protocol:'file:'},localStorage:{getItem:()=>null,setItem(){}},requestAnimationFrame(){}};
-let code=fs.readFileSync(require('path').join(__dirname,'../game.js'),'utf8');code=code.replace(/\}\)\(\);\s*$/,`globalThis.g={captureFighter,updateCaptor,shootPlayer,fighterCenters,playerDistance,beginGame,startStage,bossRank,flightModes,update,render,damageEnemy,damageBoss,loseLife,pauseGame,resumeGame,launchGroupAttack,cinematicExplosion,updateEffects,get:()=>({stage,state,weapon,lives,enemies,boss,items,bursts,ship,enemyShots,playerShots,dualFighter,captivePending,captureAnimation}),setStage:n=>{stage=n;startStage()},setLives:n=>lives=n};})();`);sandbox.entryShots=new Set(); code=code.replace('function enemyFire(enemy) {', 'function enemyFire(enemy) { if(enemy.entry) globalThis.entryShots.add(enemy.id);'); vm.runInNewContext(code,sandbox);const g=sandbox.g;
+let code=fs.readFileSync(require('path').join(__dirname,'../game.js'),'utf8');code=code.replace(/\}\)\(\);\s*$/,`globalThis.g={capturedFighterPosition,captureFighter,updateCaptor,shootPlayer,fighterCenters,playerDistance,beginGame,startStage,bossRank,flightModes,update,render,damageEnemy,damageBoss,loseLife,pauseGame,resumeGame,launchGroupAttack,cinematicExplosion,updateEffects,get:()=>({stage,state,weapon,lives,enemies,boss,items,bursts,ship,enemyShots,playerShots,dualFighter,captivePending,captureAnimation}),setStage:n=>{stage=n;startStage()},setLives:n=>lives=n};})();`);sandbox.entryShots=new Set(); code=code.replace('function enemyFire(enemy) {', 'function enemyFire(enemy) { if(enemy.entry) globalThis.entryShots.add(enemy.id);'); vm.runInNewContext(code,sandbox);const g=sandbox.g;
 const bossMap={10:'battalion',20:'regiment',30:'battalion',40:'regiment',50:'division',60:'regiment',70:'battalion',80:'regiment',90:'battalion',100:'minister'};
 g.beginGame();
 for(let n=1;n<=100;n++){
@@ -23,6 +23,24 @@ for(let n=1;n<=100;n++){
 assert(g.get().lives>3);g.beginGame();let s=g.get();s.ship.x=75;s.ship.invulnerable=0;g.loseLife();assert.equal(g.get().bursts[0].x,75);assert.equal(g.get().lives,2);g.pauseGame();let age=g.get().bursts[0].age;g.update(.5);assert.equal(g.get().bursts[0].age,age);g.resumeGame();g.update(.5);assert(g.get().bursts[0].age>age);g.get().ship.invulnerable=0;g.setLives(1);g.loseLife();assert.equal(g.get().state,'gameover');g.update(1);assert.equal(g.get().bursts.length,0);
 for(const n of [1,21,41,61,81,99]){g.beginGame();g.setStage(n);g.get().ship.invulnerable=999;for(let i=0;i<1200;i++)g.update(1/60);for(const e of g.get().enemies)assert(Number.isFinite(e.x)&&Number.isFinite(e.y));for(const b of g.get().enemyShots)assert(Number.isFinite(b.x)&&Number.isFinite(b.y));}
 
+// An off-center fighter must rise in the beam; the captor returns only after docking.
+for (const beamX of [80, 280]) {
+ g.beginGame();g.get().ship.invulnerable=999;for(let i=0;i<180;i++)g.update(1/60);
+ const e=g.get().enemies.find(e=>e.role==='captor');e.x=beamX;e.y=440;e.beam={phase:'active',age:0};
+ g.get().ship.x=beamX-20;g.get().ship.invulnerable=0;g.updateCaptor(e,.001);
+ assert.equal(e.beam.phase,'lifting');let previousY=g.get().ship.y;
+ for(let i=0;i<60;i++) {
+  g.update(1/60);assert.equal(e.x,beamX,'captor must not leave during pull');assert.equal(e.y,440);
+  const a=g.get().captureAnimation;assert(a);const pos=g.capturedFighterPosition(a);
+  assert(pos.x>=beamX-20&&pos.x<=beamX);assert(pos.y<=previousY&&pos.y>=472);previousY=pos.y;
+  if(i===32&&native){g.render(0);fs.writeFileSync('/tmp/squadron-pull-'+beamX+'.png',canvas.toBuffer('image/png'));}
+ }
+ assert(Math.abs(g.capturedFighterPosition(g.get().captureAnimation).x-beamX)<.001);
+ for(let i=0;i<8;i++)g.update(1/60);assert.equal(g.get().captureAnimation,null);assert.equal(e.beam.phase,'return');
+ g.update(.2);assert(e.x!==beamX,'captor may return after docking');
+ if(native){g.render(0);fs.writeFileSync('/tmp/squadron-docked-'+beamX+'.png',canvas.toBuffer('image/png'));}
+}
+console.log('PASS: off-center beam pull on both sides, stationary captor during lift, continuous docking before return');
 // Every entrant fires during the entry, and several special types appear early.
 g.beginGame();g.get().ship.invulnerable=999;sandbox.entryShots.clear();for(let i=0;i<180;i++)g.update(1/60);
 assert.equal(sandbox.entryShots.size,35,'all entry craft fire');assert(g.get().enemies.some(e=>e.kind==='interceptor'));
