@@ -43,7 +43,7 @@ for (const beamX of [80, 280]) {
 console.log('PASS: off-center beam pull on both sides, stationary captor during lift, continuous docking before return');
 // Every entrant fires during the entry, and several special types appear early.
 g.beginGame();g.get().ship.invulnerable=999;sandbox.entryShots.clear();for(let i=0;i<180;i++)g.update(1/60);
-assert.equal(sandbox.entryShots.size,1,'one selected entry shooter in stage one');assert(g.get().enemies.some(e=>e.kind==='interceptor'));
+assert.equal(sandbox.entryShots.size,1,'one selected entry shooter in stage one');assert(!g.get().enemies.some(e=>e.kind==='interceptor'));
 // Actual beam phases: warning can be dodged; active beam captures a vulnerable single fighter.
 let captor=g.get().enemies.find(e=>e.role==='captor');captor.beam={phase:'warning',age:0,x:180,y:440};captor.x=180;captor.y=440;g.get().ship.x=180;g.get().ship.invulnerable=0;
 g.updateCaptor(captor,.4);assert.equal(g.get().lives,3);g.pauseGame();let beamAge=captor.beam.age;g.update(.5);assert.equal(captor.beam.age,beamAge);g.resumeGame();g.updateCaptor(captor,.41);assert.equal(captor.beam.phase,'active');

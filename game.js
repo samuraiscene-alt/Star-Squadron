@@ -320,7 +320,11 @@
 
   function makeEnemy(kind, col, row, x, y) {
     const hp = kind === "leader" ? 3 + Math.floor((stage - 1) / 35)
-      : kind === "armored" ? 3 : kind === "phantom" ? 2 : kind === "elite" ? 4 : 1;
+      : kind === "armored" ? 2 + Math.min(3, Math.floor((stage - 6) / 25))
+      : kind === "shield" ? 3 + Math.floor((stage - 16) / 30)
+      : kind === "heavy" ? 4 + Math.floor((stage - 21) / 25)
+      : kind === "phantom" ? 2 + Math.floor((stage - 15) / 35)
+      : kind === "elite" ? 5 + Math.floor((stage - 81) / 10) : 1;
     return {
       id: `${stage}-${kind}-${col}-${row}-${Math.random().toString(36).slice(2, 7)}`,
       kind, col, row, baseX: x, baseY: y, x, y, hp, maxHp: hp,
@@ -359,8 +363,10 @@
       }
       for (let row = 1; row <= 2; row++) {
         for (let col = 0; col < 8; col++) {
-          const kind = row === 1 && (stage >= 41 || stage >= 5 && col % 4 === 1) ? "armored"
-            : row === 2 && (stage >= 21 || col % 3 === 1) ? "interceptor" : "assault";
+          const kind = row === 1 && stage >= 16 && (col % 4 === 2 || stage >= 51 && col % 4 === 0) ? "shield"
+            : row === 2 && stage >= 21 && (col % 4 === 0 || stage >= 61 && col % 4 === 2) ? "heavy"
+            : row === 1 && stage >= 6 && (stage >= 41 || col % 4 === 1) ? "armored"
+            : row === 2 && stage >= 11 && (stage >= 21 || col % 3 === 1) ? "interceptor" : "assault";
           enemies.push(makeEnemy(kind, col, row, left + col * spacing, 106 + (row - 1) * 28));
         }
       }
@@ -473,7 +479,7 @@
     const active = enemies.filter(e => e.alive && e.dive);
     const maxFlying = combatDifficulty().maxFlying;
     if (active.length >= maxFlying) return;
-    const order = ["leader", "scout", "interceptor", "assault", "leader", "armored", "phantom", "elite", "scout"];
+    const order = ["leader", "scout", "interceptor", "shield", "assault", "heavy", "armored", "phantom", "elite", "scout"];
     let available = [];
     for (let attempt = 0; attempt < order.length; attempt++) {
       const kind = order[groupAttackIndex++ % order.length];
@@ -571,7 +577,7 @@
     const shooterSlots = Math.max(0, shooterLimit - active.filter(e => e.dive.fireTimes.length > 0).length);
     squad.forEach((enemy, index) => {
       enemy.dive = { age: kind === "leader" ? 0 : -index * .16,
-        duration: enemy.carrying ? (stage < 30 ? 6 : 3.6) : combatDifficulty().flightDuration + (pattern === 1 || pattern >= 3 ? 1 : 0),
+        duration: (enemy.carrying ? (stage < 30 ? 6 : 3.6) : combatDifficulty().flightDuration + (pattern === 1 || pattern >= 3 ? 1 : 0)) * (kind === "interceptor" ? .78 : kind === "heavy" ? 1.2 : 1),
         route, wrapReturn, offsetX: enemy.x - cx, offsetY: enemy.y - cy, rearAttack: kind === "leader",
         ribbon: kind !== "leader",
         fireTimes: index >= shooterSlots ? [] : stage <= 5 ? [.34] : kind === "leader" ? (stage >= 10 ? [.18, .28, .68] : [.18, .28]) : stage >= 60 ? [.24, .42, .62] : [.34, .55],
@@ -696,7 +702,7 @@
     missileSound();
     const speed = combatDifficulty().missileSpeed;
     const baseAngle = Math.atan2(ship.y - enemy.y, ship.x - enemy.x);
-    const heavy = ["assault", "armored", "elite"].includes(enemy.kind);
+    const heavy = ["assault", "armored", "elite", "heavy", "shield"].includes(enemy.kind);
     // A narrow twin volley widens the attack without filling the screen.
     const guided = stage >= 31 && enemy.y < ship.y - 100 &&
       (["phantom", "elite"].includes(enemy.kind) || enemy.kind === "armored" && enemy.col % 4 === 1);
@@ -809,6 +815,8 @@
       : kind === "leader" ? ["#452b68", "#e2c4ff", "#9c63dd"]
       : kind === "interceptor" ? ["#194b68", "#b8f7ff", "#469ddb"]
       : kind === "armored" ? ["#31465b", "#ecf3ff", "#8095a9"]
+      : kind === "shield" ? ["#164c61", "#bdffff", "#30beca"]
+      : kind === "heavy" ? ["#633822", "#ffe3a2", "#cf8136"]
       : kind === "phantom" ? ["#1d5f53", "#adffdf", "#45b99d"]
       : kind === "elite" ? ["#742b27", "#ffe2a8", "#e8774e"]
       : kind === "boss" ? (level === 4 ? ["#6b292c", "#ffe4c1", "#d36d52"]
@@ -877,6 +885,26 @@
         paint.fillStyle = "#25315e"; paint.beginPath(); paint.arc(0, 1, 5.5, 0, Math.PI * 2); paint.fill();
         glass(0, 1, 3.5, 3.5);
       }
+    } else if (kind === "shield") {
+      panel([[-23,-9],[-15,-17],[15,-17],[23,-9],[19,13],[8,17],[-8,17],[-19,13]], metal);
+      for (const side of [-1, 1]) {
+        panel([[side*7,-11],[side*19,-8],[side*17,9],[side*8,11]], "#164e63");
+        line([[side*10,-10],[side*19,-6],[side*17,8]], "#78ffff", 1.2);
+        vent(side<0?-18:13, 0, 4);
+      }
+      panel([[0,-18],[6,-9],[7,10],[0,16],[-7,10],[-6,-9]], hull);
+      glass(0,-5,3,5);
+    } else if (kind === "heavy") {
+      panel([[-25,-9],[-19,-17],[-7,-12],[0,-19],[7,-12],[19,-17],[25,-9],[23,13],[9,18],[-9,18],[-23,13]], metal);
+      for (const side of [-1, 1]) {
+        panel([[side*9,-10],[side*21,-8],[side*20,10],[side*9,12]], "#663d27");
+        panel([[side*17-2,-5],[side*17+2,-5],[side*17+2,19],[side*17-2,19]], "#b7b7a6");
+        paint.fillStyle="#ffb866";paint.fillRect(side*17-1,16,2,3);
+        vent(side<0?-13:10,-3,5);
+      }
+      panel([[-7,-12],[7,-12],[8,12],[0,18],[-8,12]],hull);
+      glass(0,-5,4,5);
+      line([[-5,5],[5,5]],"#fff0ba",1.3);
     } else if (kind === "boss") {
       for (const side of [-1, 1]) {
         panel([[side * 6, -9], [side * 23, -14], [side * 29, -5], [side * 27, 13], [side * 15, 18], [side * 8, 9]], metal);
@@ -922,6 +950,14 @@
       glass(0, -5, wide ? 3 : 2.4, 4);
       line([[-2, 3], [0, 7], [2, 3]], colors[1], .6);
       paint.fillStyle = colors[0]; paint.fillRect(-2, 8, 4, 3);
+      if (kind === "armored") {
+        for (const side of [-1,1]) panel([[side*8,-9],[side*19,-8],[side*19,6],[side*8,9]], "#aab5c0");
+        line([[-5,3],[5,3]], "#eef6ff", 2);
+      }
+      if (kind === "interceptor") {
+        panel([[0,-24],[3,-13],[-3,-13]], "#b6fbff");
+        for(const side of [-1,1]) line([[side*6,-5],[side*17,7]], "#79e5ff", 1.2);
+      }
       if (wide) {
         paint.strokeStyle = "#f5d684"; paint.lineWidth = .7;
         paint.beginPath(); paint.arc(0, 3, 4, 0, Math.PI * 2); paint.stroke();
@@ -950,7 +986,7 @@
     const art = captured ? capturedCraftImage(level) : craftImage(kind, level);
     const size = miniature ? .32 : kind === "scout" ? .64 : kind === "assault" ? .69
       : kind === "leader" ? .75 : kind === "boss" ? .84 + level * .08
-      : kind === "interceptor" ? .65 : kind === "armored" ? .74 : kind === "phantom" ? .66 : kind === "elite" ? .77 : level >= 4 ? .88 : .82;
+      : kind === "heavy" ? .94 : kind === "shield" ? .79 : kind === "interceptor" ? .65 : kind === "armored" ? .74 : kind === "phantom" ? .66 : kind === "elite" ? .77 : level >= 4 ? .88 : .82;
     ctx.save(); ctx.translate(x, y); ctx.rotate(angle); ctx.scale(size, size);
     ctx.imageSmoothingEnabled = true;
     if (!miniature && !captured) {
@@ -997,7 +1033,13 @@
       ctx.closePath();
       ctx.fill();
     }
-    if (enemy.kind === "leader" && enemy.hp < enemy.maxHp) {
+    if (enemy.kind === "shield") {
+      ctx.save();ctx.translate(enemy.x, enemy.y);
+      ctx.strokeStyle = enemy.shieldFlash > 0 ? "#ffffff" : shieldClosed(enemy) ? "#68edff" : "#275660";
+      ctx.lineWidth = shieldClosed(enemy) ? 2.5 : 1;
+      ctx.beginPath();ctx.arc(0, 0, 24, .2, Math.PI - .2);ctx.stroke();ctx.restore();
+    }
+    if (["leader", "armored", "shield", "heavy", "elite"].includes(enemy.kind) && enemy.hp < enemy.maxHp) {
       ctx.fillStyle = "#59445f";
       ctx.fillRect(enemy.x - 7, enemy.y - 12, 14, 2);
       ctx.fillStyle = "#e2a7ff";
@@ -1262,7 +1304,7 @@
   }
   function enemyExplosion(enemy) {
     const special = enemy.kind === "leader" || enemy.role === "captor";
-    const heavy = ["armored", "elite", "assault"].includes(enemy.kind);
+    const heavy = ["armored", "elite", "assault", "heavy", "shield"].includes(enemy.kind);
     const radius = special ? 31 : heavy ? 24 : 20;
     const duration = special ? .72 : heavy ? .58 : .48;
     bursts.push({ x: enemy.x, y: enemy.y, kind: "enemy", age: 0, radius, duration,
@@ -1341,14 +1383,20 @@
       ctx.restore();
     }
   }
-  function damageEnemy(enemy, amount = 1) {
+  function shieldClosed(enemy) {
+    return enemy.kind === "shield" && (elapsed + enemy.phase) % 2.8 < 1.55;
+  }
+  function damageEnemy(enemy, amount = 1, hitX = enemy.x, hitY = enemy.y + 10) {
     if (!enemy.alive) return;
+    if (amount < 999 && shieldClosed(enemy) && hitY >= enemy.y && Math.abs(hitX - enemy.x) < 19) {
+      enemy.shieldFlash = .12; impactSound(true); return;
+    }
     enemy.hp -= amount;
     enemy.flash = 0.12;
     if (enemy.hp > 0) impactSound(enemy.kind === "leader");
     if (enemy.hp <= 0) {
       enemy.alive = false;
-      const points = enemy.kind === "leader" ? 250 : enemy.kind === "assault" ? 100 : 50;
+      const points = enemy.kind === "leader" ? 250 : enemy.kind === "heavy" ? 220 : enemy.kind === "shield" ? 180 : enemy.kind === "armored" ? 120 : enemy.kind === "assault" ? 100 : 50;
       score += points + (enemy.dive ? 25 : 0);
       enemyExplosion(enemy);
       if (enemy.carrying) {
@@ -1471,7 +1519,7 @@
     const keyboardFire = keys.has(" ") || keys.has("Spacebar");
     if (respawnDelay <= 0 && (fireButton.pressed || keyboardFire) && fireCooldown <= 0) {
       shootPlayer();
-      fireCooldown = weapon === 3 ? .18 : weapon === 4 ? .46 : weapon === 5 ? .62 : .38;
+      fireCooldown = weapon === 3 ? .18 : weapon === 4 ? .30 : weapon === 5 ? .62 : .38;
     }
 
     if (!bossStage) {
@@ -1496,6 +1544,7 @@
     for (const enemy of enemies) {
       if (!enemy.alive) continue;
       enemy.flash = Math.max(0, enemy.flash - dt);
+      enemy.shieldFlash = Math.max(0, (enemy.shieldFlash || 0) - dt);
       if (enemy.role === "captor" && updateCaptor(enemy, dt)) continue;
       const flight = enemy.entry || enemy.dive;
       if (!flight) {
@@ -1545,7 +1594,7 @@
       if (shot.type === "laser") {
         for (const enemy of enemies) {
           if (enemy.alive && !shot.hitIds.has(enemy.id) && Math.abs(enemy.x - shot.x) < 8 && enemy.y < shot.y && enemy.y > shot.y - shot.length) {
-            shot.hitIds.add(enemy.id); damageEnemy(enemy, 1);
+            shot.hitIds.add(enemy.id); damageEnemy(enemy, 1, shot.x, shot.y);
           }
         }
         if (boss && Math.abs(boss.x - shot.x) < boss.hitRadius && boss.y < shot.y && boss.y > shot.y - shot.length && !shot.hitBoss) {
@@ -1559,12 +1608,12 @@
           addExplosion(shot.x, shot.y, "#82f8ff", 22);
           addExplosion(shot.x, shot.y, "#a68aff", 10);
           explosionSound("plasma");
-          enemies.forEach(e => { if (e.alive && distance(e.x, e.y, shot.x, shot.y) < 44) damageEnemy(e, 2); });
+          enemies.forEach(e => { if (e.alive && distance(e.x, e.y, shot.x, shot.y) < 44) damageEnemy(e, 2, shot.x, shot.y); });
           if (boss && distance(boss.x, boss.y, shot.x, shot.y) < 54) damageBoss(3);
         }
       } else if (shot.type === "bullet") {
         const target = enemies.find(e => e.alive && distance(e.x, e.y, shot.x, shot.y) < 12);
-        if (target) { shot.dead = true; damageEnemy(target); }
+        if (target) { shot.dead = true; damageEnemy(target, 1, shot.x, shot.y); }
         if (boss && distance(boss.x, boss.y, shot.x, shot.y) < boss.hitRadius) { shot.dead = true; damageBoss(1); }
       }
     }
