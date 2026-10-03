@@ -4,6 +4,8 @@
   const canvas = document.getElementById("game");
   const ctx = canvas.getContext("2d", { alpha: false });
   const W = 360;
+  const FINAL_STAGE = 100;
+  const WEAPON_EVENTS = { 10: 2, 20: 3, 30: 4, 40: 5 };
   const keys = new Set();
   const useTouchInput = "ontouchstart" in window;
 
@@ -47,6 +49,8 @@
   let enemyShots = [];
   let items = [];
   let particles = [];
+  let bursts = [];
+  let respawnDelay = 0;
   let boss = null;
   let bossStage = false;
   let ship = { x: W / 2, y: 0, vx: 0, invulnerable: 0 };
@@ -59,7 +63,7 @@
   const activeSoundSources = new Set();
   let screenShake = 0;
   let fireCooldown = 0;
-  let attackCooldown = stage === 1 ? 3.4 : 3.0;
+  let attackCooldown = Math.max(2.8, 3.4 - (stage - 1) * .006);
   let stageClearTimer = 0;
   let banner = "";
   let bannerTime = 0;
@@ -233,12 +237,14 @@
     noiseVoice(.035, heavy ? 1800 : 3500, 900, .055, "bandpass");
   }
   function explosionSound(kind) {
-    if (kind === "boss") {
-      noiseVoice(1.8, 2200, 65, .38);
-      sweepVoice(90, 25, 1.25, "sine", .36);
-      noiseVoice(1.1, 1200, 90, .25, "lowpass", .22);
-      sweepVoice(160, 32, .9, "triangle", .2, .25);
-      noiseVoice(.65, 2700, 180, .13, "bandpass", .5);
+    if (["boss", "battalion", "regiment", "division", "minister"].includes(kind)) {
+      const tier = kind === "battalion" ? 1 : kind === "regiment" ? 2 : kind === "division" ? 3 : 4;
+      const duration = [0, .85, 1.15, 1.6, 2.3][tier];
+      noiseVoice(duration, 1800 + tier * 150, 65, .22 + tier * .035);
+      sweepVoice(125 - tier * 10, 30 - tier, duration * .7, "sine", .22 + tier * .025);
+      noiseVoice(duration * .6, 1200, 90, .14 + tier * .025, "lowpass", .15);
+      sweepVoice(180, 32, duration * .5, "triangle", .13, .2);
+      if (tier >= 3) noiseVoice(.65, 2700, 180, .1, "bandpass", .45);
     } else if (kind === "leader") {
       noiseVoice(.75, 2300, 110, .26);
       sweepVoice(115, 32, .65, "sine", .26);
@@ -275,7 +281,8 @@
   }
 
   function makeEnemy(kind, col, row, x, y) {
-    const hp = kind === "leader" ? 3 : 1;
+    const hp = kind === "leader" ? 3 + Math.floor((stage - 1) / 35)
+      : kind === "armored" ? 3 : kind === "phantom" ? 2 : kind === "elite" ? 4 : 1;
     return {
       id: `${stage}-${kind}-${col}-${row}-${Math.random().toString(36).slice(2, 7)}`,
       kind, col, row, baseX: x, baseY: y, x, y, hp, maxHp: hp,
@@ -283,14 +290,26 @@
       phase: rand(0, Math.PI * 2)
     };
   }
+  function bossRank(round) {
+    if (round === 100) return { kind: "minister", name: "국방부장관기", tier: 4, color: "#ff9475" };
+    if (round === 50) return { kind: "division", name: "사단장기", tier: 3, color: "#e3b8ff" };
+    if ([20, 40, 60, 80].includes(round)) return { kind: "regiment", name: "연대장기", tier: 2, color: "#7ee6ff" };
+    if (round % 10 === 0) return { kind: "battalion", name: "대대장기", tier: 1, color: "#9cebd7" };
+    return null;
+  }
+  function flightModes(round) {
+    return 3 + (round >= 25 ? 1 : 0) + (round >= 45 ? 1 : 0) + (round >= 65 ? 1 : 0) + (round >= 85 ? 1 : 0);
+  }
   function startStage() {
     enemies = [];
     playerShots = [];
     enemyShots = [];
     items = [];
     particles = [];
+    bursts = [];
     boss = null;
-    bossStage = stage % 3 === 0;
+    const rank = bossRank(stage);
+    bossStage = Boolean(rank);
     stageClearTimer = 0;
     attackCooldown = stage === 1 ? 3.4 : 3.0;
     groupAttackIndex = 0;
@@ -302,17 +321,21 @@
       }
       for (let row = 1; row <= 2; row++) {
         for (let col = 0; col < 8; col++) {
-          enemies.push(makeEnemy("assault", col, row, left + col * spacing, 106 + (row - 1) * 28));
+          enemies.push(makeEnemy(row === 1 && stage >= 41 ? "armored" : row === 2 && stage >= 21 ? "interceptor" : "assault", col, row, left + col * spacing, 106 + (row - 1) * 28));
         }
       }
       for (let row = 3; row <= 4; row++) {
         for (let col = 0; col < 8; col++) {
-          enemies.push(makeEnemy("scout", col, row, left + col * spacing, 170 + (row - 3) * 28));
+          enemies.push(makeEnemy(row === 3 && stage >= 61 ? "phantom" : row === 4 && stage >= 81 ? "elite" : "scout", col, row, left + col * spacing, 170 + (row - 3) * 28));
         }
       }
-      if (weapon < 5) {
-        const carrier = enemies.find(e => e.kind === "scout" && e.col === 3 && e.row === 3);
-        if (carrier) carrier.carrier = true;
+      // Bonus carriers are separate from the four scheduled weapon upgrades.
+      if (stage % 7 === 0) {
+        const carrier = enemies.find(e => e.kind === "leader" && e.col === 1);
+        if (carrier) carrier.carrier = "life";
+      } else if (stage < 40 && stage % 5 === 0) {
+        const carrier = enemies.find(e => e.row === 3 && e.col === 3);
+        if (carrier) carrier.carrier = "score";
       }
       // Each row enters as one shared formation, with no entry-phase firing.
       for (let row = 0; row <= 4; row++) {
@@ -334,18 +357,20 @@
       banner = `STAGE ${stage}`;
       bannerTime = 1.3;
     } else {
+      const hp = Math.round([0, 28, 66, 108, 190][rank.tier] + stage * .6);
       boss = {
-        x: W / 2, y: 110, hp: 12 + stage, maxHp: 12 + stage,
-        dir: 1, shotTimer: 1.0, flash: 0, age: 0
+        ...rank, x: W / 2, y: 120, hp, maxHp: hp, hitRadius: 27 + rank.tier * 4,
+        dir: 1, shotTimer: 1.6, flash: 0, age: 0, volley: 0
       };
-      banner = `COMMANDER ${stage}`;
-      bannerTime = 1.5;
+      banner = `${stage}판 · ${rank.name}`;
+      bannerTime = 2;
     }
   }
   function beginGame() {
     resetControls();
     stopSounds();
     screenShake = 0;
+    respawnDelay = 0;
     score = 0;
     stage = 1;
     lives = 3;
@@ -383,7 +408,9 @@
   }
   function launchGroupAttack() {
     if (enemies.some(e => e.alive && (e.entry || e.dive))) return;
-    const order = ["scout", "assault", "scout", "leader"];
+    const order = ["scout", "assault",
+      ...(stage >= 21 ? ["interceptor"] : []), ...(stage >= 41 ? ["armored"] : []),
+      ...(stage >= 61 ? ["phantom"] : []), ...(stage >= 81 ? ["elite"] : []), "scout", "leader"];
     let available = [];
     for (let attempt = 0; attempt < order.length; attempt++) {
       const kind = order[groupAttackIndex++ % order.length];
@@ -395,7 +422,7 @@
     const row = available[0].row;
     available = available.filter(e => e.row === row).sort((a, b) => a.col - b.col);
     const kind = available[0].kind;
-    const count = kind === "leader" ? 1 : stage === 1 ? 4 : Math.min(6, 4 + Math.floor(stage / 2));
+    const count = kind === "leader" ? 1 : Math.min(6, 4 + Math.floor((stage - 1) / 25));
     const squad = available.slice(0, count);
     const cx = squad.reduce((sum, e) => sum + e.x, 0) / squad.length;
     const cy = squad.reduce((sum, e) => sum + e.y, 0) / squad.length;
@@ -417,7 +444,7 @@
         [[opposite, ship.y + 24], [opposite, front], [homeX - direction * 65, homeY + 60], [homeX, homeY]]
       ];
     } else {
-      const pattern = (groupAttackIndex - 1) % 3;
+      const pattern = (groupAttackIndex - 1) % flightModes(stage);
       const middle = (cy + front) / 2;
       if (pattern === 0) {
         // S-shaped ribbon: several ships follow the same left/right bends.
@@ -433,44 +460,71 @@
         }
         points.push([homeX + direction * 60, homeY + 40], [homeX, homeY]);
         route = curvedRoute(points);
+      } else if (pattern >= 3) {
+        const points = [[cx, cy]];
+        for (let i = 0; i <= 12; i++) {
+          const t = i / 12, angle = t * Math.PI * (pattern === 4 ? 4 : 3);
+          const radius = pattern === 3 ? 105 * (1 - .45 * t) : 95;
+          const px = pattern === 5 ? W / 2 + 95 * Math.sin(t * Math.PI * 4)
+            : pattern === 6 ? W / 2 + 90 * Math.sin(angle) * Math.cos(t * Math.PI)
+            : W / 2 + direction * radius * Math.cos(angle);
+          const py = pattern >= 5 ? cy + 40 + (front - cy - 40) * t
+            : middle + Math.min(80, (front - cy) * .3) * Math.sin(angle);
+          points.push([px, py]);
+        }
+        points.push([homeX + direction * 60, homeY + 45], [homeX, homeY]);
+        route = curvedRoute(points);
       } else {
         // Wide banked loop across the screen rather than a simple down-and-up dive.
         route = curvedRoute([[cx, cy], [65, middle], [110, front + 25],
           [270, front + 25], [295, middle], [220, cy + 30], [homeX, homeY]]);
       }
     }
-    const pattern = (groupAttackIndex - 1) % 3;
+    const pattern = (groupAttackIndex - 1) % flightModes(stage);
     squad.forEach((enemy, index) => {
       enemy.dive = { age: kind === "leader" ? 0 : -index * .16,
-        duration: kind === "leader" ? 6.2 : (stage === 1 ? 6.2 : 5.4) + (pattern === 1 ? 1.0 : 0),
+        duration: Math.max(4.7, 6.2 - (stage - 1) * .015) + (pattern === 1 || pattern >= 3 ? 1 : 0),
         route, offsetX: enemy.x - cx, offsetY: enemy.y - cy, rearAttack: kind === "leader",
         ribbon: kind !== "leader",
-        fireTimes: kind === "leader" ? (stage >= 10 ? [.18, .28, .68] : [.18, .28]) : [.34, .55],
+        fireTimes: kind === "leader" ? (stage >= 10 ? [.18, .28, .68] : [.18, .28]) : stage >= 60 ? [.24, .42, .62] : [.34, .55],
         nextShot: 0 };
       enemy.shot = false;
     });
   }
 
+  function pushEnemyShot(x, y, angle, speed, color, type = "straight", radius = 2.5) {
+    enemyShots.push({ x, y, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed,
+      baseAngle: angle, speed, age: 0, type, r: radius, color });
+  }
   function enemyFire(enemy) {
     missileSound();
-    const speed = stage === 1 ? 100 : 125 + stage * 4;
+    const speed = 100 + (stage - 1) * 1.15;
     const baseAngle = Math.atan2(ship.y - enemy.y, ship.x - enemy.x);
-    const angles = stage === 1 ? [0] : enemy.kind === "leader" ? [-0.3, -0.15, 0, 0.15, 0.3]
-      : enemy.kind === "assault" ? [-0.16, 0, 0.16] : [0];
-    angles.forEach(offset => {
-      const angle = baseAngle + offset;
-      enemyShots.push({ x: enemy.x, y: enemy.y + 6, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed,
-        r: enemy.kind === "leader" ? 3.2 : 2.5, color: enemy.kind === "leader" ? "#d28aff" : enemy.kind === "assault" ? "#ff675c" : "#f0c35b" });
-    });
+    const heavy = ["assault", "armored", "elite"].includes(enemy.kind);
+    const angles = stage < 20 ? [0] : enemy.kind === "leader" ? [-.24, 0, .24]
+      : heavy ? [-.13, 0, .13] : [0];
+    const type = stage >= 65 && ["phantom", "elite"].includes(enemy.kind) ? "homing"
+      : stage >= 35 && ["interceptor", "armored"].includes(enemy.kind) ? "wave" : "straight";
+    angles.forEach(offset => pushEnemyShot(enemy.x, enemy.y + 6, baseAngle + offset, speed,
+      type === "homing" ? "#9cfde2" : type === "wave" ? "#74cfff" : enemy.kind === "leader" ? "#d28aff" : heavy ? "#ff675c" : "#f0c35b", type));
   }
   function bossFire() {
     if (!boss) return;
     missileSound();
-    const spread = [-0.48, -0.24, 0, 0.24, 0.48];
-    spread.forEach(offset => enemyShots.push({
-      x: boss.x, y: boss.y + 17, vx: Math.sin(offset) * 155,
-      vy: Math.cos(offset) * 155, r: 3.2, color: "#cf7bff"
-    }));
+    const speed = 105 + stage * .8;
+    const tier = boss.tier;
+    boss.volley += 1;
+    const aim = Math.atan2(ship.y - boss.y, ship.x - boss.x);
+    const count = 2 * tier + 1;
+    const centered = boss.volley % 2 === 0 ? aim : Math.PI / 2;
+    for (let i = 0; i < count; i++) {
+      const offset = (i - (count - 1) / 2) * .14;
+      pushEnemyShot(boss.x, boss.y + 20, centered + offset, speed, boss.color,
+        tier >= 3 && boss.volley % 3 === 0 ? "wave" : "straight", 3);
+    }
+    if (tier === 4 && boss.volley % 4 === 0) {
+      for (const side of [-1, 1]) pushEnemyShot(boss.x + side * 22, boss.y, aim + side * .3, speed * .8, "#ffda8a", "homing", 3);
+    }
   }
 
   function drawPixelMap(map, x, y, palette, cell, alpha = 1) {
@@ -514,10 +568,11 @@
     ctx.textAlign = "center";
     ctx.fillStyle = "#7c91ab";
     ctx.font = "bold 10px ui-monospace, monospace";
-    ctx.fillText(`STAGE ${String(stage).padStart(2, "0")}`, W / 2, 32);
-    for (let i = 0; i < lives; i++) {
+    ctx.fillText(`STAGE ${String(stage).padStart(3, "0")} / 100`, W / 2, 32);
+    for (let i = 0; i < Math.min(lives, 5); i++) {
       drawCraft("player", 22 + i * 17, 54, 0, 1, true);
     }
+    if (lives > 5) { ctx.textAlign = "left"; ctx.fillStyle = "#b7d7ec"; ctx.font = "10px ui-monospace, monospace"; ctx.fillText("×" + lives, 110, 49); }
     const soundX = W - 21;
     ctx.strokeStyle = soundEnabled ? "#8390a0" : "#444d59";
     ctx.lineWidth = 1.4;
@@ -554,7 +609,13 @@
     const colors = kind === "scout" ? ["#80601e", "#fff0a4", "#dba640"]
       : kind === "assault" ? ["#692b38", "#ffbac0", "#dc4a5d"]
       : kind === "leader" ? ["#452b68", "#e2c4ff", "#9c63dd"]
-      : kind === "boss" ? ["#193a4c", "#b0f7eb", "#388c8b"]
+      : kind === "interceptor" ? ["#194b68", "#b8f7ff", "#469ddb"]
+      : kind === "armored" ? ["#31465b", "#ecf3ff", "#8095a9"]
+      : kind === "phantom" ? ["#1d5f53", "#adffdf", "#45b99d"]
+      : kind === "elite" ? ["#742b27", "#ffe2a8", "#e8774e"]
+      : kind === "boss" ? (level === 4 ? ["#6b292c", "#ffe4c1", "#d36d52"]
+        : level === 3 ? ["#42325e", "#f0d4ff", "#9370bd"]
+        : level === 2 ? ["#213e68", "#c8f7ff", "#5494bc"] : ["#193a4c", "#b0f7eb", "#388c8b"])
       : level === 5 ? ["#263b67", "#e2efff", "#977ae9"] : ["#233c62", "#eef8ff", "#5f9bd0"];
     const metal = paint.createLinearGradient(-17, -15, 16, 18);
     metal.addColorStop(0, colors[1]); metal.addColorStop(.35, colors[2]); metal.addColorStop(1, colors[0]);
@@ -633,9 +694,20 @@
       panel([[-6, 4], [6, 4], [5, 11], [-5, 11]], "#263e4b");
       paint.fillStyle = "#edbf66"; paint.beginPath(); paint.arc(0, 6, 3, 0, Math.PI * 2); paint.fill();
       line([[-5, -16], [0, -20], [5, -16]], "#f8e4a8", .9);
+      for (let i = 1; i < level; i++) {
+        for (const side of [-1, 1]) {
+          const x = side * (8 + i * 5);
+          paint.fillStyle = "#26344b"; paint.fillRect(x - 1.5, 9, 3, 12);
+          paint.fillStyle = level === 4 ? "#ffbe8d" : "#b6f3ff"; paint.fillRect(x - .8, 18, 1.6, 3);
+        }
+      }
+      if (level >= 3) {
+        paint.strokeStyle = level === 4 ? "#ffc38f" : "#dec2ff"; paint.lineWidth = 1;
+        paint.beginPath(); paint.arc(0, 6, 5, 0, Math.PI * 2); paint.stroke();
+      }
     } else {
-      const wide = kind === "leader";
-      const red = kind === "assault";
+      const wide = ["leader", "armored", "elite"].includes(kind);
+      const red = ["assault", "interceptor"].includes(kind);
       for (const side of [-1, 1]) {
         const wing = wide ? 21 : red ? 19 : 18;
         panel([[side * 3, -7], [side * (wing - 4), -12], [side * wing, -2],
@@ -663,7 +735,8 @@
   function drawCraft(kind, x, y, angle = 0, level = 1, miniature = false) {
     const art = craftImage(kind, level);
     const size = miniature ? .32 : kind === "scout" ? .64 : kind === "assault" ? .69
-      : kind === "leader" ? .75 : kind === "boss" ? .96 : level >= 4 ? .88 : .82;
+      : kind === "leader" ? .75 : kind === "boss" ? .84 + level * .08
+      : kind === "interceptor" ? .65 : kind === "armored" ? .74 : kind === "phantom" ? .66 : kind === "elite" ? .77 : level >= 4 ? .88 : .82;
     ctx.save(); ctx.translate(x, y); ctx.rotate(angle); ctx.scale(size, size);
     ctx.imageSmoothingEnabled = true;
     if (!miniature) {
@@ -694,7 +767,7 @@
     const bob = enemy.dive || enemy.entry ? 0 : Math.sin(elapsed * 2) * 1.5;
     drawCraft(enemy.kind, enemy.x, enemy.y + bob, enemy.angle || 0);
     if (enemy.carrier) {
-      ctx.fillStyle = "#fff1a3";
+      ctx.fillStyle = enemy.carrier === "life" ? "#92ecff" : "#fff1a3";
       ctx.beginPath();
       ctx.moveTo(enemy.x, enemy.y - 15);
       ctx.lineTo(enemy.x + 4, enemy.y - 11);
@@ -713,7 +786,7 @@
   function drawBoss() {
     if (!boss) return;
     if (!(boss.flash > 0 && Math.floor(elapsed * 24) % 2 === 0)) {
-      drawCraft("boss", boss.x, boss.y, Math.PI);
+      drawCraft("boss", boss.x, boss.y, Math.PI, boss.tier);
     }
     const barW = 110;
     const y = 66;
@@ -725,10 +798,10 @@
     ctx.textBaseline = "bottom";
     ctx.font = "8px ui-monospace, monospace";
     ctx.fillStyle = "#c6d3d3";
-    ctx.fillText("COMMANDER", W / 2, y - 2);
+    ctx.fillText(boss.name, W / 2, y - 2);
   }
   function drawShip() {
-    if (ship.invulnerable > 0 && Math.floor(elapsed * 13) % 2 === 0) return;
+    if (respawnDelay > 0 || lives <= 0 || (ship.invulnerable > 0 && Math.floor(elapsed * 13) % 2 === 0)) return;
     drawCraft("player", ship.x, ship.y, 0, weapon);
   }
   function drawPlasma(shot) {
@@ -785,24 +858,31 @@
       }
     }
     for (const shot of enemyShots) {
+      ctx.save(); ctx.translate(shot.x, shot.y);
+      ctx.rotate(Math.atan2(shot.vy, shot.vx) - Math.PI / 2);
       ctx.fillStyle = shot.color;
-      ctx.fillRect(Math.round(shot.x - shot.r), Math.round(shot.y - shot.r), shot.r * 2, shot.r * 2);
+      if (shot.type === "homing") {
+        ctx.beginPath(); ctx.moveTo(0, 5); ctx.lineTo(shot.r, -4); ctx.lineTo(0, -2); ctx.lineTo(-shot.r, -4); ctx.closePath(); ctx.fill();
+      } else if (shot.type === "wave") {
+        ctx.beginPath(); ctx.moveTo(0, 4); ctx.lineTo(3, 0); ctx.lineTo(0, -4); ctx.lineTo(-3, 0); ctx.closePath(); ctx.fill();
+      } else ctx.fillRect(-shot.r, -shot.r, shot.r * 2, shot.r * 2);
+      ctx.restore();
     }
   }
   function drawItems() {
     for (const item of items) {
-      ctx.save();
-      ctx.translate(item.x, item.y);
-      ctx.rotate(Math.sin(elapsed * 5) * 0.08);
-      ctx.fillStyle = "#f2c85c";
-      ctx.fillRect(-8, -8, 16, 16);
-      ctx.fillStyle = "#fff3b2";
-      ctx.fillRect(-4, -4, 8, 8);
-      ctx.fillStyle = "#263449";
-      ctx.font = "bold 8px ui-monospace, monospace";
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      ctx.fillText(String(item.level), 0, 0);
+      ctx.save(); ctx.translate(item.x, item.y);
+      ctx.rotate(Math.sin(elapsed * 5) * .08);
+      ctx.fillStyle = item.type === "life" ? "#213c60" : item.type === "weapon" ? "#9f7730" : "#745820";
+      ctx.strokeStyle = item.type === "life" ? "#8ce7ff" : "#fce199";
+      ctx.lineWidth = 1;
+      ctx.fillRect(-11, -11, 22, 22); ctx.strokeRect(-11, -11, 22, 22);
+      if (item.type === "life") drawCraft("player", 0, 0, 0, 1, true);
+      else {
+        ctx.fillStyle = "#fff1ae"; ctx.font = "bold 10px ui-monospace, monospace";
+        ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        ctx.fillText(item.type === "weapon" ? String(item.level) : "★", 0, 0);
+      }
       ctx.restore();
     }
   }
@@ -886,6 +966,68 @@
         life: rand(.18, .48), maxLife: .48, size: rand(1.5, 3), color });
     }
   }
+  function cinematicExplosion(x, y, kind) {
+    const profile = {
+      player: { duration: .8, radius: 34, color: "#8feeff" },
+      battalion: { duration: 1.0, radius: 46, color: "#ffe0a2" },
+      regiment: { duration: 1.35, radius: 62, color: "#8ceeff" },
+      division: { duration: 1.7, radius: 80, color: "#d3a9ff" },
+      minister: { duration: 2.3, radius: 105, color: "#ff9b6d" }
+    }[kind];
+    bursts.push({ x, y, kind, age: 0, ...profile });
+    explosionSound(kind);
+    const count = kind === "player" ? 24 : kind === "minister" ? 72 : 44;
+    for (let i = 0; i < count; i++) {
+      const angle = i / count * Math.PI * 2 + rand(-.1, .1);
+      const speed = rand(45, profile.radius * 2);
+      const life = rand(profile.duration * .4, profile.duration);
+      particles.push({ x, y, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed,
+        life, maxLife: life, size: rand(1, 3), color: i % 3 ? profile.color : "#fff7dd" });
+    }
+    if (kind !== "player") screenShake = Math.max(screenShake, .18);
+  }
+  function updateEffects(dt) {
+    for (const burst of bursts) burst.age += dt;
+    bursts = bursts.filter(burst => burst.age < burst.duration);
+    for (const p of particles) {
+      p.x += p.vx * dt; p.y += p.vy * dt;
+      p.vx *= Math.exp(-dt * 1.2); p.vy *= Math.exp(-dt * 1.2); p.life -= dt;
+    }
+    particles = particles.filter(p => p.life > 0);
+  }
+  function drawBursts() {
+    for (const burst of bursts) {
+      const progress = clamp(burst.age / burst.duration, 0, 1);
+      const radius = 5 + burst.radius * Math.pow(progress, .55);
+      ctx.save(); ctx.translate(burst.x, burst.y);
+      // Expanding hot core, debris shockwave and delayed secondary blasts.
+      ctx.globalCompositeOperation = "lighter";
+      const glow = ctx.createRadialGradient(0, 0, 1, 0, 0, radius);
+      glow.addColorStop(0, "rgba(255,255,235," + ((1 - progress) * .9) + ")");
+      glow.addColorStop(.25, "rgba(255,190,90," + ((1 - progress) * .65) + ")");
+      glow.addColorStop(.65, "rgba(255,80,30," + ((1 - progress) * .3) + ")");
+      glow.addColorStop(1, "rgba(255,70,25,0)");
+      ctx.fillStyle = glow; ctx.beginPath(); ctx.arc(0, 0, radius, 0, Math.PI * 2); ctx.fill();
+      ctx.globalAlpha = Math.pow(1 - progress, 1.4);
+      ctx.strokeStyle = burst.color; ctx.lineWidth = 2.5 * (1 - progress) + .5;
+      ctx.beginPath(); ctx.arc(0, 0, radius, 0, Math.PI * 2); ctx.stroke();
+      ctx.strokeStyle = "#fff6d8"; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.arc(0, 0, radius * .64, 0, Math.PI * 2); ctx.stroke();
+      if (burst.kind !== "player") {
+        for (let i = 0; i < (burst.kind === "minister" ? 6 : 3); i++) {
+          const delay = .1 + i * .1;
+          const phase = clamp((burst.age - delay) / .4, 0, 1);
+          if (phase <= 0 || phase >= 1) continue;
+          const angle = i * 2.4;
+          const x = Math.cos(angle) * burst.radius * .32, y = Math.sin(angle) * burst.radius * .24;
+          ctx.globalAlpha = (1 - phase) * .8;
+          ctx.fillStyle = i % 2 ? burst.color : "#fff7cd";
+          ctx.beginPath(); ctx.arc(x, y, 3 + phase * burst.radius * .2, 0, Math.PI * 2); ctx.fill();
+        }
+      }
+      ctx.restore();
+    }
+  }
   function damageEnemy(enemy, amount = 1) {
     if (!enemy.alive) return;
     enemy.hp -= amount;
@@ -898,7 +1040,7 @@
       addExplosion(enemy.x, enemy.y, enemy.kind === "leader" ? "#bd78ed" : enemy.kind === "assault" ? "#f16b59" : "#e9c45a");
       explosionSound(enemy.kind);
       if (enemy.carrier) {
-        items.push({ x: enemy.x, y: enemy.y + 8, vy: 105, level: Math.min(5, weapon + 1) });
+        items.push({ x: enemy.x, y: enemy.y + 8, vy: 75, type: enemy.carrier });
       }
     }
   }
@@ -909,8 +1051,12 @@
     if (boss.hp > 0) impactSound(true);
     if (boss.hp <= 0) {
       score += 2500 + stage * 100;
-      addExplosion(boss.x, boss.y, "#68dfd3", 28);
-      explosionSound("boss");
+      cinematicExplosion(boss.x, boss.y, boss.kind);
+      enemyShots = [];
+      playerShots = [];
+      const nextWeapon = WEAPON_EVENTS[stage];
+      if (nextWeapon) items.push({ x: boss.x, y: boss.y + 12, vy: 75, type: "weapon", level: nextWeapon });
+      if (stage > 40 && stage < 100 && stage % 20 === 0) items.push({ x: boss.x - 28, y: boss.y + 12, vy: 70, type: "life" });
       boss = null;
     }
   }
@@ -942,12 +1088,13 @@
   function loseLife() {
     if (ship.invulnerable > 0 || state !== "playing") return;
     lives -= 1;
+    const hitX = ship.x, hitY = ship.y;
     ship.vx = 0;
-    ship.invulnerable = 1.5;
-    ship.x = W / 2;
+    ship.invulnerable = 2.2;
+    respawnDelay = .8;
     enemyShots = [];
-    addExplosion(ship.x, ship.y, "#8bd8f2", 14);
-    explosionSound("player");
+    cinematicExplosion(hitX, hitY, "player");
+    ship.x = W / 2;
     playerImpactFeedback();
     if (lives <= 0) {
       state = "gameover";
@@ -959,7 +1106,9 @@
   }
 
   function update(dt) {
-    if (state !== "paused") screenShake = Math.max(0, screenShake - dt);
+    if (state === "paused") return;
+    screenShake = Math.max(0, screenShake - dt);
+    updateEffects(dt);
     if (state !== "playing") return;
     elapsed += dt;
     if (bannerTime > 0) bannerTime -= dt;
@@ -969,18 +1118,19 @@
     if (state !== "playing") return;
 
     ship.invulnerable = Math.max(0, ship.invulnerable - dt);
+    respawnDelay = Math.max(0, respawnDelay - dt);
     const keyboardAxis = (keys.has("ArrowRight") || keys.has("d") || keys.has("D") ? 1 : 0)
       - (keys.has("ArrowLeft") || keys.has("a") || keys.has("A") ? 1 : 0);
     const axis = Math.abs(keyboardAxis) > 0 ? keyboardAxis : joy.knobX / 19;
     // Input determines velocity in this frame; retain the existing top speed.
     const inputAxis = clamp(axis, -1, 1);
-    ship.vx = Math.abs(inputAxis) < 0.08 ? 0 : inputAxis * 165;
+    ship.vx = respawnDelay > 0 || Math.abs(inputAxis) < 0.08 ? 0 : inputAxis * 165;
     ship.x = clamp(ship.x + ship.vx * dt, 19, W - 19);
     if ((ship.x <= 19 && ship.vx < 0) || (ship.x >= W - 19 && ship.vx > 0)) ship.vx = 0;
 
     fireCooldown -= dt;
     const keyboardFire = keys.has(" ") || keys.has("Spacebar");
-    if ((fireButton.pressed || keyboardFire) && fireCooldown <= 0) {
+    if (respawnDelay <= 0 && (fireButton.pressed || keyboardFire) && fireCooldown <= 0) {
       shootPlayer();
       fireCooldown = weapon === 3 ? .18 : weapon === 4 ? .46 : weapon === 5 ? .62 : .38;
     }
@@ -989,16 +1139,16 @@
       attackCooldown -= dt;
       if (attackCooldown <= 0) {
         launchGroupAttack();
-        attackCooldown = stage === 1 ? 5.0 : Math.max(2.4, 4.1 - stage * .08);
+        attackCooldown = Math.max(2.1, 5.0 - (stage - 1) * .029);
       }
     } else if (boss) {
       boss.age += dt;
-      boss.x += boss.dir * (46 + stage * 2) * dt;
+      boss.x += boss.dir * (38 + stage * .48) * dt;
       if (boss.x > W - 56) { boss.x = W - 56; boss.dir = -1; }
       if (boss.x < 56) { boss.x = 56; boss.dir = 1; }
-      boss.y = 108 + Math.sin(boss.age * 2.1) * 8;
+      boss.y = 120 + Math.sin(boss.age * (1.1 + boss.tier * .15)) * (6 + boss.tier * 3);
       boss.shotTimer -= dt;
-      if (boss.shotTimer <= 0) { bossFire(); boss.shotTimer = Math.max(.9, 1.65 - stage * .025); }
+      if (boss.shotTimer <= 0) { bossFire(); boss.shotTimer = Math.max(.7, 1.8 - stage * .006 - boss.tier * .13); }
       boss.flash = Math.max(0, boss.flash - dt);
     }
 
@@ -1040,7 +1190,20 @@
       if (shot.type === "laser") shot.ttl -= dt;
       if (shot.type === "plasma") shot.ttl -= dt;
     }
-    for (const shot of enemyShots) { shot.x += shot.vx * dt; shot.y += shot.vy * dt; }
+    for (const shot of enemyShots) {
+      shot.age += dt;
+      if (shot.type === "wave") {
+        const angle = shot.baseAngle + Math.sin(shot.age * 5) * .22;
+        shot.vx = Math.cos(angle) * shot.speed; shot.vy = Math.sin(angle) * shot.speed;
+      } else if (shot.type === "homing" && shot.age < 1.15) {
+        const target = Math.atan2(ship.y - shot.y, ship.x - shot.x);
+        const current = Math.atan2(shot.vy, shot.vx);
+        const difference = Math.atan2(Math.sin(target - current), Math.cos(target - current));
+        const angle = current + clamp(difference, -dt * .65, dt * .65);
+        shot.vx = Math.cos(angle) * shot.speed; shot.vy = Math.sin(angle) * shot.speed;
+      }
+      shot.x += shot.vx * dt; shot.y += shot.vy * dt;
+    }
 
     for (const shot of playerShots) {
       if (shot.type === "laser") {
@@ -1049,12 +1212,12 @@
             shot.hitIds.add(enemy.id); damageEnemy(enemy, 1);
           }
         }
-        if (boss && Math.abs(boss.x - shot.x) < 28 && boss.y < shot.y && boss.y > shot.y - shot.length && !shot.hitBoss) {
+        if (boss && Math.abs(boss.x - shot.x) < boss.hitRadius && boss.y < shot.y && boss.y > shot.y - shot.length && !shot.hitBoss) {
           shot.hitBoss = true; damageBoss(2);
         }
       } else if (shot.type === "plasma" && !shot.exploded) {
         const target = enemies.find(e => e.alive && distance(e.x, e.y, shot.x, shot.y) < 14);
-        const bossHit = boss && distance(boss.x, boss.y, shot.x, shot.y) < 32;
+        const bossHit = boss && distance(boss.x, boss.y, shot.x, shot.y) < boss.hitRadius;
         if (target || bossHit) {
           shot.exploded = true; shot.ttl = .16;
           addExplosion(shot.x, shot.y, "#82f8ff", 22);
@@ -1066,7 +1229,7 @@
       } else if (shot.type === "bullet") {
         const target = enemies.find(e => e.alive && distance(e.x, e.y, shot.x, shot.y) < 12);
         if (target) { shot.dead = true; damageEnemy(target); }
-        if (boss && distance(boss.x, boss.y, shot.x, shot.y) < 30) { shot.dead = true; damageBoss(1); }
+        if (boss && distance(boss.x, boss.y, shot.x, shot.y) < boss.hitRadius) { shot.dead = true; damageBoss(1); }
       }
     }
     playerShots = playerShots.filter(s => !s.dead && s.y > -30 && (s.type !== "laser" || s.ttl > 0) && (s.type !== "plasma" || s.ttl > 0));
@@ -1080,18 +1243,26 @@
 
     for (const item of items) {
       item.y += item.vy * dt;
-      if (distance(item.x, item.y, ship.x, ship.y) < 25) { item.caught = true; upgradeWeapon(item.level); }
+      if (respawnDelay <= 0 && distance(item.x, item.y, ship.x, ship.y) < 25) {
+        item.caught = true;
+        if (item.type === "weapon") upgradeWeapon(item.level);
+        else if (item.type === "life") { lives += 1; banner = "보너스 기체 · 생명 +1"; bannerTime = 2; tone(1040, .16, "sine", .06); }
+        else { score += 500; banner = "보너스 점수 +500"; bannerTime = 1.7; tone(760, .12, "sine", .05); }
+      }
     }
     items = items.filter(item => !item.caught && item.y < H + 12);
 
-    for (const p of particles) { p.x += p.vx * dt; p.y += p.vy * dt; p.vx *= .985; p.vy *= .985; p.life -= dt; }
-    particles = particles.filter(p => p.life > 0);
-
+    if (state !== "playing") return;
     const remaining = enemies.some(e => e.alive);
-    if (!remaining && !boss && items.length === 0) {
+    if (!remaining && !boss && items.length === 0 && bursts.length === 0) {
       stageClearTimer += dt;
-      if (stageClearTimer > .85) { stage += 1; startStage(); }
-    }
+      if (stageClearTimer > 1) {
+        if (stage >= FINAL_STAGE) {
+          state = "victory"; resetControls();
+          if (score > highScore) { highScore = score; writeNumber("ss-high", highScore); }
+        } else { stage += 1; startStage(); }
+      }
+    } else stageClearTimer = 0;
   }
 
   function render(dt) {
@@ -1107,10 +1278,12 @@
     drawShots();
     drawItems();
     drawParticles();
+    drawBursts();
     drawShip();
     drawBanner();
     drawControls();
     if (state === "title") drawOverlay("STAR SQUADRON", "편대 공격을 돌파하고 무기를 강화하세요", "화면을 눌러 시작 · 좌우 조이스틱 / 발사 버튼");
+    if (state === "victory") drawOverlay("MISSION COMPLETE", `100판 클리어 · SCORE ${score}`, "화면을 눌러 처음부터");
     if (state === "gameover") drawOverlay("GAME OVER", `SCORE ${String(score).padStart(6, "0")}  ·  BEST ${String(highScore).padStart(6, "0")}`, "화면을 눌러 다시 시작");
     if (state === "paused") drawOverlay("PAUSED", "게임이 잠시 멈췄습니다", "이 안내창을 눌러 계속");
     ctx.restore();
@@ -1160,7 +1333,7 @@
       if (p.x >= 26 && p.x <= W - 26 && p.y >= H * .36 && p.y <= H * .36 + 140) resumeGame();
       return;
     }
-    if (state === "title" || state === "gameover") beginGame();
+    if (state === "title" || state === "gameover" || state === "victory") beginGame();
     if (state !== "playing") return;
     initAudio();
     if (distance(p.x, p.y, joy.x, joy.y) < 48 && joy.pointer === null) {
@@ -1228,7 +1401,7 @@
   window.addEventListener("keydown", event => {
     if (["ArrowLeft", "ArrowRight", " "].includes(event.key)) event.preventDefault();
     if (event.key === "Enter") {
-      if (state === "title" || state === "gameover") beginGame();
+      if (state === "title" || state === "gameover" || state === "victory") beginGame();
       else if (state === "paused") resumeGame();
     }
     if (!event.repeat && event.key.toLowerCase() === "m") toggleSound();
