@@ -226,14 +226,26 @@
     startStage();
   }
 
+  function curvedRoute(points) {
+    // Smooth connected curves through waypoints, including the figure-eight crossing.
+    return points.slice(0, -1).map((point, i) => {
+      const previous = points[Math.max(0, i - 1)];
+      const next = points[i + 1];
+      const after = points[Math.min(points.length - 1, i + 2)];
+      return [point,
+        [point[0] + (next[0] - previous[0]) / 6, point[1] + (next[1] - previous[1]) / 6],
+        [next[0] - (after[0] - point[0]) / 6, next[1] - (after[1] - point[1]) / 6], next];
+    });
+  }
   function flightPosition(flight, progress) {
     const t = clamp(progress, 0, 1) * flight.route.length;
     const index = Math.min(flight.route.length - 1, Math.floor(t));
     const u = Math.min(1, t - index), v = 1 - u;
     const points = flight.route[index];
+    const spread = flight.ribbon ? 0.08 + 0.92 * Math.pow(Math.abs(2 * progress - 1), 4) : 1;
     return {
-      x: v * v * v * points[0][0] + 3 * v * v * u * points[1][0] + 3 * v * u * u * points[2][0] + u * u * u * points[3][0] + flight.offsetX,
-      y: v * v * v * points[0][1] + 3 * v * v * u * points[1][1] + 3 * v * u * u * points[2][1] + u * u * u * points[3][1] + flight.offsetY
+      x: v * v * v * points[0][0] + 3 * v * v * u * points[1][0] + 3 * v * u * u * points[2][0] + u * u * u * points[3][0] + flight.offsetX * spread,
+      y: v * v * v * points[0][1] + 3 * v * v * u * points[1][1] + 3 * v * u * u * points[2][1] + u * u * u * points[3][1] + flight.offsetY * spread
     };
   }
   function launchGroupAttack() {
@@ -250,7 +262,7 @@
     const row = available[0].row;
     available = available.filter(e => e.row === row).sort((a, b) => a.col - b.col);
     const kind = available[0].kind;
-    const count = kind === "leader" ? 1 : stage === 1 ? 2 : 3;
+    const count = kind === "leader" ? 1 : stage === 1 ? 4 : Math.min(6, 4 + Math.floor(stage / 2));
     const squad = available.slice(0, count);
     const cx = squad.reduce((sum, e) => sum + e.x, 0) / squad.length;
     const cy = squad.reduce((sum, e) => sum + e.y, 0) / squad.length;
@@ -272,19 +284,38 @@
         [[opposite, ship.y + 24], [opposite, front], [homeX - direction * 65, homeY + 60], [homeX, homeY]]
       ];
     } else {
-      const swing = kind === "scout" ? 60 : 90;
-      route = [
-        [[cx, cy], [cx + direction * swing, cy - 25], [target + direction * 65, front - 130], [target, front - 60]],
-        [[target, front - 60], [target - direction * 70, front + 20], [target - direction * 70, front + 55], [target, front + 55]],
-        [[target, front + 55], [target + direction * 90, front + 55], [homeX + direction * 80, homeY + 50], [homeX, homeY]]
-      ];
+      const pattern = (groupAttackIndex - 1) % 3;
+      const middle = (cy + front) / 2;
+      if (pattern === 0) {
+        // S-shaped ribbon: several ships follow the same left/right bends.
+        route = curvedRoute([[cx, cy], [85, cy + 65], [275, middle],
+          [85, front - 45], [240, front + 30], [290, middle], [homeX, homeY]]);
+      } else if (pattern === 1) {
+        // Horizontal figure eight, then a sweeping return to the original row.
+        const points = [[cx, cy], [W / 2, middle]];
+        const radiusY = Math.min(95, Math.max(40, (front - cy) * .32));
+        for (let i = 1; i <= 12; i++) {
+          const t = i / 12 * Math.PI * 2;
+          points.push([W / 2 + direction * 100 * Math.sin(t), middle + radiusY * Math.sin(2 * t)]);
+        }
+        points.push([homeX + direction * 60, homeY + 40], [homeX, homeY]);
+        route = curvedRoute(points);
+      } else {
+        // Wide banked loop across the screen rather than a simple down-and-up dive.
+        route = curvedRoute([[cx, cy], [65, middle], [110, front + 25],
+          [270, front + 25], [295, middle], [220, cy + 30], [homeX, homeY]]);
+      }
     }
-    squad.forEach(enemy => {
-      enemy.dive = { age: 0, duration: kind === "leader" ? 6.2 : stage === 1 ? 4.5 : 3.8,
-        route, offsetX: enemy.x - cx, offsetY: enemy.y - cy, rearAttack: kind === "leader" };
+    const pattern = (groupAttackIndex - 1) % 3;
+    squad.forEach((enemy, index) => {
+      enemy.dive = { age: kind === "leader" ? 0 : -index * .16,
+        duration: kind === "leader" ? 6.2 : (stage === 1 ? 6.2 : 5.4) + (pattern === 1 ? 1.0 : 0),
+        route, offsetX: enemy.x - cx, offsetY: enemy.y - cy, rearAttack: kind === "leader",
+        ribbon: kind !== "leader", canFire: kind === "leader" || index < (stage === 1 ? 2 : 3) };
       enemy.shot = false;
     });
   }
+
   function enemyFire(enemy) {
     const speed = stage === 1 ? 100 : 125 + stage * 4;
     const baseAngle = Math.atan2(ship.y - enemy.y, ship.x - enemy.x);
@@ -419,16 +450,68 @@
   }
   function drawShip() {
     if (ship.invulnerable > 0 && Math.floor(elapsed * 13) % 2 === 0) return;
-    const map = playerPixels;
-    const palette = ["#e7efff", "#80d2f5", "#3975c4", "#e85355"];
+    const map = weapon === 5 ? [
+      "0000000011100000000", "0000000123210000000", "0010001234321000100",
+      "0121012334332101210", "1232123334333212321", "1233233334333323321",
+      "0123332334332333210", "0012333234323332100", "0001233323233321000",
+      "0012232111112322100", "0122211000001122210", "0012100000000012100"
+    ] : playerPixels;
+    const palette = weapon === 5 ? ["#e5ffff", "#8667e9", "#247a9c", "#a1ffff"] : ["#e7efff", "#80d2f5", "#3975c4", "#e85355"];
     const cell = weapon >= 4 ? 2 : 1.9;
     if (weapon >= 3) {
-      ctx.fillStyle = weapon >= 5 ? "rgba(245,190,75,.18)" : "rgba(74,190,245,.14)";
+      ctx.fillStyle = weapon >= 5 ? "rgba(120,94,255,.18)" : "rgba(74,190,245,.14)";
       ctx.beginPath();
       ctx.arc(ship.x, ship.y, weapon >= 5 ? 26 : 21, 0, Math.PI * 2);
       ctx.fill();
     }
     drawPixelMap(map, ship.x, ship.y, palette, cell);
+    if (weapon === 5) {
+      ctx.save(); ctx.globalCompositeOperation = "lighter";
+      ctx.strokeStyle = "#83f9ff"; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.ellipse(ship.x, ship.y - 2, 9, 5, elapsed * 2, 0, Math.PI * 2); ctx.stroke();
+      ctx.fillStyle = "#efffff";
+      ctx.beginPath(); ctx.arc(ship.x, ship.y - 2, 2.5 + Math.sin(elapsed * 8) * .5, 0, Math.PI * 2); ctx.fill();
+      ctx.restore();
+    }
+  }
+  function drawPlasma(shot) {
+    ctx.save();
+    ctx.translate(shot.x, shot.y);
+    ctx.globalCompositeOperation = "lighter";
+    const phase = elapsed * 9 + shot.x * .03;
+    if (shot.exploded) {
+      const p = clamp(1 - shot.ttl / .16, 0, 1);
+      ctx.globalAlpha = 1 - p;
+      ctx.strokeStyle = "#8bffff"; ctx.lineWidth = 3 * (1 - p) + .5;
+      ctx.beginPath(); ctx.arc(0, 0, 10 + p * 44, 0, Math.PI * 2); ctx.stroke();
+      ctx.strokeStyle = "#b28aff";
+      ctx.beginPath(); ctx.arc(0, 0, 6 + p * 30, 0, Math.PI * 2); ctx.stroke();
+    } else {
+      // Twin flowing energy trails, a bright core and counter-rotating containment rings.
+      for (let trail = 0; trail < 9; trail++) {
+        const y = trail * 7;
+        ctx.globalAlpha = (1 - trail / 9) * .45;
+        ctx.fillStyle = trail % 2 ? "#9067ff" : "#48edff";
+        ctx.beginPath(); ctx.ellipse(Math.sin(phase - trail * .7) * trail * .7, y, Math.max(1, 9 - trail), 7, 0, 0, Math.PI * 2); ctx.fill();
+      }
+      ctx.globalAlpha = .2; ctx.fillStyle = "#6c72ff";
+      ctx.beginPath(); ctx.ellipse(0, 0, 20, 26, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.globalAlpha = .55; ctx.fillStyle = "#26cfe9";
+      ctx.beginPath(); ctx.ellipse(0, -2, 10, 15, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.globalAlpha = 1; ctx.fillStyle = "#e2ffff";
+      ctx.beginPath(); ctx.ellipse(0, -4, 3.5, 9, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.lineWidth = 1.5; ctx.strokeStyle = "#8effff";
+      ctx.beginPath(); ctx.ellipse(0, 0, 16, 7, phase, .2, Math.PI * 1.6); ctx.stroke();
+      ctx.strokeStyle = "#b58bff";
+      ctx.beginPath(); ctx.ellipse(0, 0, 18, 8, -phase, .2, Math.PI * 1.6); ctx.stroke();
+      for (let side = -1; side <= 1; side += 2) {
+        ctx.strokeStyle = side < 0 ? "#8bffff" : "#c2a0ff";
+        ctx.beginPath(); ctx.moveTo(side * 4, -17);
+        ctx.lineTo(side * (9 + Math.sin(phase) * 3), -8);
+        ctx.lineTo(side * 6, -1); ctx.lineTo(side * 12, 7); ctx.stroke();
+      }
+    }
+    ctx.restore();
   }
   function drawShots() {
     for (const shot of playerShots) {
@@ -438,10 +521,7 @@
         ctx.fillStyle = "#b9f8ff";
         ctx.fillRect(shot.x - 2, shot.y - shot.length, 4, shot.length);
       } else if (shot.type === "plasma") {
-        ctx.fillStyle = "rgba(255,206,105,.3)";
-        ctx.beginPath(); ctx.arc(shot.x, shot.y, shot.r + 4, 0, Math.PI * 2); ctx.fill();
-        ctx.fillStyle = "#fff0a3";
-        ctx.beginPath(); ctx.arc(shot.x, shot.y, shot.r, 0, Math.PI * 2); ctx.fill();
+        drawPlasma(shot);
       } else {
         ctx.fillStyle = shot.color;
         ctx.fillRect(Math.round(shot.x - 1.5), Math.round(shot.y - 5), 3, 9);
@@ -684,7 +764,7 @@
         enemy.x = position.x;
         enemy.y = position.y;
         enemy.angle = Math.atan2(ahead.x - position.x, -(ahead.y - position.y));
-        if (enemy.dive && !enemy.shot) {
+        if (enemy.dive && flight.canFire && !enemy.shot) {
           const fireNow = flight.rearAttack
             ? p >= 0.66 && p < 0.76 && enemy.y > ship.y + 12
             : p >= 0.42 && p < 0.7;
@@ -720,7 +800,8 @@
         const bossHit = boss && distance(boss.x, boss.y, shot.x, shot.y) < 32;
         if (target || bossHit) {
           shot.exploded = true; shot.ttl = .16;
-          addExplosion(shot.x, shot.y, "#ffe28a", 13);
+          addExplosion(shot.x, shot.y, "#82f8ff", 22);
+          addExplosion(shot.x, shot.y, "#a68aff", 10);
           enemies.forEach(e => { if (e.alive && distance(e.x, e.y, shot.x, shot.y) < 44) damageEnemy(e, 2); });
           if (boss && distance(boss.x, boss.y, shot.x, shot.y) < 54) damageBoss(3);
         }
