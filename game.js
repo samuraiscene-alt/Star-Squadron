@@ -138,7 +138,7 @@
   function prepareAudioOutput() {
     if (audioOutput) return;
     audioOutput = audioContext.createGain();
-    audioOutput.gain.value = .7;
+    audioOutput.gain.value = .595;
     const limiter = audioContext.createDynamicsCompressor();
     limiter.threshold.value = -18;
     limiter.knee.value = 16;
@@ -210,9 +210,9 @@
     if (level <= 3) {
       // Short muzzle crack and a low mechanical punch, rather than a pitched beep.
       const machineGun = level === 3;
-      noiseVoice(machineGun ? .055 : .085, 4500, 1000, machineGun ? .15 : .18, "bandpass");
-      sweepVoice(machineGun ? 150 : 190, 55, .085, "triangle", .16);
-      if (level === 2) noiseVoice(.055, 3200, 800, .1, "bandpass", .012);
+      noiseVoice(machineGun ? .055 : .085, 4500, 1000, machineGun ? .1125 : .135, "bandpass");
+      sweepVoice(machineGun ? 150 : 190, 55, .085, "triangle", .12);
+      if (level === 2) noiseVoice(.055, 3200, 800, .075, "bandpass", .012);
     } else if (level === 4) {
       sweepVoice(2400, 180, .24, "sawtooth", .065);
       sweepVoice(1400, 260, .17, "sine", .075);
