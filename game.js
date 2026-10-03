@@ -864,8 +864,6 @@
     const bob = enemy.dive || enemy.entry ? 0 : Math.sin(elapsed * 2) * 1.5;
     drawCraft(enemy.role === "captor" ? "phantom" : enemy.kind, enemy.x, enemy.y + bob, enemy.angle || 0);
     if (enemy.role === "captor") {
-      ctx.strokeStyle = "#d6a9ff"; ctx.lineWidth = 1.2;
-      ctx.beginPath(); ctx.ellipse(enemy.x, enemy.y, 18, 12, elapsed * 1.5, 0, Math.PI * 2); ctx.stroke();
       if (enemy.carrying && (!captureAnimation || captureAnimation.enemy !== enemy)) {
         ctx.strokeStyle = "#a9e5ff"; ctx.lineWidth = 2;
         ctx.beginPath(); ctx.moveTo(enemy.x, enemy.y + 11); ctx.lineTo(enemy.x, enemy.y + 20); ctx.stroke();
@@ -1428,7 +1426,6 @@
     drawParticles();
     drawBursts();
     drawShip();
-    drawBanner();
     drawControls();
     if (state === "title") drawOverlay("STAR SQUADRON", "편대 공격을 돌파하고 무기를 강화하세요", "화면을 눌러 시작 · 좌우 조이스틱 / 발사 버튼");
     if (state === "victory") drawOverlay("MISSION COMPLETE", `100판 클리어 · SCORE ${score}`, "화면을 눌러 처음부터");
