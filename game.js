@@ -311,7 +311,9 @@
       enemy.dive = { age: kind === "leader" ? 0 : -index * .16,
         duration: kind === "leader" ? 6.2 : (stage === 1 ? 6.2 : 5.4) + (pattern === 1 ? 1.0 : 0),
         route, offsetX: enemy.x - cx, offsetY: enemy.y - cy, rearAttack: kind === "leader",
-        ribbon: kind !== "leader", canFire: kind === "leader" || index < (stage === 1 ? 2 : 3) };
+        ribbon: kind !== "leader",
+        fireTimes: kind === "leader" ? (stage >= 10 ? [.18, .28, .68] : [.18, .28]) : [.34, .55],
+        nextShot: 0 };
       enemy.shot = false;
     });
   }
@@ -764,11 +766,13 @@
         enemy.x = position.x;
         enemy.y = position.y;
         enemy.angle = Math.atan2(ahead.x - position.x, -(ahead.y - position.y));
-        if (enemy.dive && flight.canFire && !enemy.shot) {
-          const fireNow = flight.rearAttack
-            ? p >= 0.66 && p < 0.76 && enemy.y > ship.y + 12
-            : p >= 0.42 && p < 0.7;
-          if (fireNow) { enemyFire(enemy); enemy.shot = true; }
+        if (enemy.dive && flight.nextShot < flight.fireTimes.length && p >= flight.fireTimes[flight.nextShot]) {
+          const rearVolley = flight.rearAttack && flight.nextShot === 2;
+          // Early stages fire only with space in front; rear fire unlocks at stage 10.
+          if (rearVolley ? stage >= 10 && enemy.y > ship.y + 12 : enemy.y < ship.y - 35) {
+            enemyFire(enemy);
+          }
+          flight.nextShot += 1;
         }
         if (p >= 1) {
           enemy.entry = null; enemy.dive = null;
