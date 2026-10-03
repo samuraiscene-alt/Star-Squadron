@@ -672,17 +672,40 @@
     enemyShots.push({ x, y, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed,
       baseAngle: angle, speed, age: 0, type, r: radius, color });
   }
+  function updateEnemyShot(shot, dt) {
+    shot.age += dt;
+    if (shot.type === "wave") {
+      const angle = shot.baseAngle + Math.sin(shot.age * 5) * .22;
+      shot.vx = Math.cos(angle) * shot.speed; shot.vy = Math.sin(angle) * shot.speed;
+    } else if (shot.type === "homing") {
+      // Tracking ends permanently at the player's line or after seven seconds.
+      if (shot.y >= ship.y - 8 || shot.age >= 7 || shot.vy <= 0) shot.guidanceEnded = true;
+      if (!shot.guidanceEnded) {
+        const target = Math.atan2(ship.y - shot.y, ship.x - shot.x);
+        const current = Math.atan2(shot.vy, shot.vx);
+        const difference = Math.atan2(Math.sin(target - current), Math.cos(target - current));
+        // Downward-only heading and limited turn rate prevent a return attack.
+        const angle = clamp(current + clamp(difference, -dt * .45, dt * .45), .35, Math.PI - .35);
+        shot.vx = Math.cos(angle) * shot.speed; shot.vy = Math.sin(angle) * shot.speed;
+      }
+    }
+    shot.x += shot.vx * dt; shot.y += shot.vy * dt;
+    if (shot.type === "homing" && shot.y >= ship.y - 8) shot.guidanceEnded = true;
+  }
   function enemyFire(enemy) {
     missileSound();
     const speed = combatDifficulty().missileSpeed;
     const baseAngle = Math.atan2(ship.y - enemy.y, ship.x - enemy.x);
     const heavy = ["assault", "armored", "elite"].includes(enemy.kind);
-    const angles = stage < 20 ? [0] : enemy.kind === "leader" ? [-.24, 0, .24]
-      : heavy ? [-.13, 0, .13] : [0];
-    const type = stage >= 65 && ["phantom", "elite"].includes(enemy.kind) ? "homing"
-      : stage >= 8 && ["interceptor", "armored"].includes(enemy.kind) ? "wave" : "straight";
-    angles.forEach(offset => pushEnemyShot(enemy.x, enemy.y + 6, baseAngle + offset, speed,
-      type === "homing" ? "#9cfde2" : type === "wave" ? "#74cfff" : enemy.kind === "leader" ? "#d28aff" : heavy ? "#ff675c" : "#f0c35b", type));
+    // A narrow twin volley widens the attack without filling the screen.
+    const guided = stage >= 31 && enemy.y < ship.y - 100 &&
+      (["phantom", "elite"].includes(enemy.kind) || enemy.kind === "armored" && enemy.col % 4 === 1);
+    const twin = stage >= 11 && (heavy || enemy.kind === "leader");
+    const type = guided ? "homing" : twin ? "spread" : "straight";
+    const offsets = guided ? [0] : twin ? [-.08, .08] : [0];
+    offsets.forEach((offset, i) => pushEnemyShot(enemy.x + (twin && !guided ? (i ? 4 : -4) : 0), enemy.y + 6,
+      baseAngle + offset, guided ? Math.min(135, speed * .72) : speed,
+      guided ? "#9cfde2" : twin ? "#ff9565" : enemy.kind === "leader" ? "#d28aff" : "#f0c35b", type));
   }
   function bossFire() {
     if (!boss) return;
@@ -691,15 +714,13 @@
     const tier = boss.tier;
     boss.volley += 1;
     const aim = Math.atan2(ship.y - boss.y, ship.x - boss.x);
-    const count = 2 * tier + 1;
     const centered = boss.volley % 2 === 0 ? aim : Math.PI / 2;
-    for (let i = 0; i < count; i++) {
-      const offset = (i - (count - 1) / 2) * .14;
-      pushEnemyShot(boss.x, boss.y + 20, centered + offset, speed, boss.color,
-        tier >= 3 && boss.volley % 3 === 0 ? "wave" : "straight", 3);
-    }
-    if (tier === 4 && boss.volley % 4 === 0) {
-      for (const side of [-1, 1]) pushEnemyShot(boss.x + side * 22, boss.y, aim + side * .3, speed * .8, "#ffda8a", "homing", 3);
+    const offsets = stage >= 20 ? [-.08, .08] : [0];
+    offsets.forEach((offset, i) => pushEnemyShot(boss.x + (offsets.length === 2 ? (i ? 5 : -5) : 0), boss.y + 20,
+      centered + offset, speed, boss.color, offsets.length === 2 ? "spread" : "straight", 3));
+    // Guided boss missiles begin at stage 40 and share the no-U-turn behavior.
+    if (stage >= 40 && boss.volley % (tier >= 3 ? 3 : 4) === 0) {
+      pushEnemyShot(boss.x, boss.y + 20, aim, Math.min(135, speed * .72), "#9cfde2", "homing", 3);
     }
   }
 
@@ -1067,7 +1088,7 @@
       ctx.fillStyle = shot.color;
       if (shot.type === "homing") {
         ctx.beginPath(); ctx.moveTo(0, 5); ctx.lineTo(shot.r, -4); ctx.lineTo(0, -2); ctx.lineTo(-shot.r, -4); ctx.closePath(); ctx.fill();
-      } else if (shot.type === "wave") {
+      } else if (shot.type === "wave" || shot.type === "spread") {
         ctx.beginPath(); ctx.moveTo(0, 4); ctx.lineTo(3, 0); ctx.lineTo(0, -4); ctx.lineTo(-3, 0); ctx.closePath(); ctx.fill();
       } else ctx.fillRect(-shot.r, -shot.r, shot.r * 2, shot.r * 2);
       ctx.restore();
@@ -1518,20 +1539,7 @@
       if (shot.type === "laser") shot.ttl -= dt;
       if (shot.type === "plasma") shot.ttl -= dt;
     }
-    for (const shot of enemyShots) {
-      shot.age += dt;
-      if (shot.type === "wave") {
-        const angle = shot.baseAngle + Math.sin(shot.age * 5) * .22;
-        shot.vx = Math.cos(angle) * shot.speed; shot.vy = Math.sin(angle) * shot.speed;
-      } else if (shot.type === "homing" && shot.age < 1.15) {
-        const target = Math.atan2(ship.y - shot.y, ship.x - shot.x);
-        const current = Math.atan2(shot.vy, shot.vx);
-        const difference = Math.atan2(Math.sin(target - current), Math.cos(target - current));
-        const angle = current + clamp(difference, -dt * .65, dt * .65);
-        shot.vx = Math.cos(angle) * shot.speed; shot.vy = Math.sin(angle) * shot.speed;
-      }
-      shot.x += shot.vx * dt; shot.y += shot.vy * dt;
-    }
+    for (const shot of enemyShots) updateEnemyShot(shot, dt);
 
     for (const shot of playerShots) {
       if (shot.type === "laser") {
