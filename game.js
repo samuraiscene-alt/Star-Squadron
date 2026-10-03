@@ -48,7 +48,7 @@
   let particles = [];
   let boss = null;
   let bossStage = false;
-  let ship = { x: W / 2, y: 0, invulnerable: 0 };
+  let ship = { x: W / 2, y: 0, vx: 0, invulnerable: 0 };
   let joy = { x: 65, y: 0, knobX: 0, pointer: null };
   let fireButton = { x: W - 65, y: 0, pointer: null, pressed: false, flash: 0 };
   let soundEnabled = readNumber("ss-sound", 1) === 1;
@@ -56,7 +56,7 @@
   let musicTimer = null;
   let musicStep = 0;
   let fireCooldown = 0;
-  let attackCooldown = 1.7;
+  let attackCooldown = 0.6;
   let stageClearTimer = 0;
   let banner = "";
   let bannerTime = 0;
@@ -162,7 +162,7 @@
     boss = null;
     bossStage = stage % 3 === 0;
     stageClearTimer = 0;
-    attackCooldown = 1.7;
+    attackCooldown = 0.6;
     groupAttackIndex = 0;
     const spacing = 41;
     const left = (W - spacing * 7) / 2;
@@ -202,6 +202,7 @@
     lives = 3;
     weapon = 1;
     ship.x = W / 2;
+    ship.vx = 0;
     ship.invulnerable = 0;
     state = "playing";
     fireCooldown = 0;
@@ -216,7 +217,7 @@
     available.sort((a, b) => Math.abs(a.x - ship.x) - Math.abs(b.x - ship.x));
     const count = kind === "scout" ? 3 : kind === "assault" ? 2 : 1;
     available.slice(0, count).forEach((enemy, i) => {
-      enemy.dive = { age: -i * 0.22, duration: kind === "scout" ? 2.8 : 3.2, fromX: enemy.baseX, fromY: enemy.baseY };
+      enemy.dive = { age: -i * 0.12, duration: kind === "scout" ? 2.2 : 2.6, fromX: enemy.baseX, fromY: enemy.baseY };
       enemy.shot = false;
     });
   }
@@ -509,7 +510,7 @@
     }
   }
   function shootPlayer() {
-    const speed = 390;
+    const speed = 300;
     if (weapon === 1) {
       playerShots.push({ x: ship.x, y: ship.y - 17, vy: -speed, type: "bullet", color: "#6de7ff", r: 3 });
     } else if (weapon === 2 || weapon === 3) {
@@ -536,6 +537,7 @@
   function loseLife() {
     if (ship.invulnerable > 0 || state !== "playing") return;
     lives -= 1;
+    ship.vx = 0;
     ship.invulnerable = 1.5;
     ship.x = W / 2;
     enemyShots = [];
@@ -567,20 +569,25 @@
     const keyboardAxis = (keys.has("ArrowRight") || keys.has("d") || keys.has("D") ? 1 : 0)
       - (keys.has("ArrowLeft") || keys.has("a") || keys.has("A") ? 1 : 0);
     const axis = Math.abs(keyboardAxis) > 0 ? keyboardAxis : joy.knobX / 19;
-    ship.x = clamp(ship.x + axis * 235 * dt, 19, W - 19);
+    const inputAxis = clamp(axis, -1, 1);
+    const targetSpeed = Math.abs(inputAxis) < 0.08 ? 0 : inputAxis * 165;
+    const acceleration = targetSpeed === 0 ? 850 : 650;
+    ship.vx += clamp(targetSpeed - ship.vx, -acceleration * dt, acceleration * dt);
+    ship.x = clamp(ship.x + ship.vx * dt, 19, W - 19);
+    if ((ship.x <= 19 && ship.vx < 0) || (ship.x >= W - 19 && ship.vx > 0)) ship.vx = 0;
 
     fireCooldown -= dt;
     const keyboardFire = keys.has(" ") || keys.has("Spacebar");
     if ((fireButton.pressed || keyboardFire) && fireCooldown <= 0) {
       shootPlayer();
-      fireCooldown = weapon === 3 ? .105 : weapon === 4 ? .36 : weapon === 5 ? .52 : .25;
+      fireCooldown = weapon === 3 ? .18 : weapon === 4 ? .46 : weapon === 5 ? .62 : .38;
     }
 
     if (!bossStage) {
       attackCooldown -= dt;
       if (attackCooldown <= 0) {
         launchGroupAttack();
-        attackCooldown = Math.max(1.15, 3.0 - stage * .12);
+        attackCooldown = Math.max(.85, 1.65 - stage * .08);
       }
     } else if (boss) {
       boss.age += dt;
@@ -616,7 +623,7 @@
           enemy.x = enemy.x + (d.fromX - enemy.x) * Math.min(1, dt * 2.7);
           enemy.y = H * .69 + (d.fromY - H * .69) * q;
         }
-        if (!enemy.shot && p > .35 && p < .75) { enemyFire(enemy); enemy.shot = true; }
+        if (!enemy.shot && p > .22 && p < .75) { enemyFire(enemy); enemy.shot = true; }
         if (p >= 1) { enemy.dive = null; enemy.x = enemy.baseX; enemy.y = enemy.baseY; }
       }
       if (ship.invulnerable <= 0 && distance(enemy.x, enemy.y, ship.x, ship.y) < 18) loseLife();
@@ -714,7 +721,6 @@
       fireButton.pointer = event.pointerId;
       fireButton.pressed = true;
       fireButton.flash = .12;
-      fireCooldown = 0;
       initAudio();
     }
   }
