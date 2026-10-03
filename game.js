@@ -51,6 +51,9 @@
   let particles = [];
   let bursts = [];
   let respawnDelay = 0;
+  let dualFighter = false;
+  let captivePending = false;
+  let captureAnimation = null;
   let boss = null;
   let bossStage = false;
   let ship = { x: W / 2, y: 0, vx: 0, invulnerable: 0 };
@@ -311,7 +314,7 @@
     const rank = bossRank(stage);
     bossStage = Boolean(rank);
     stageClearTimer = 0;
-    attackCooldown = stage === 1 ? 3.4 : 3.0;
+    attackCooldown = Math.max(2.8, 3.4 - (stage - 1) * .006);
     groupAttackIndex = 0;
     const spacing = 41;
     const left = (W - spacing * 7) / 2;
@@ -321,14 +324,22 @@
       }
       for (let row = 1; row <= 2; row++) {
         for (let col = 0; col < 8; col++) {
-          enemies.push(makeEnemy(row === 1 && stage >= 41 ? "armored" : row === 2 && stage >= 21 ? "interceptor" : "assault", col, row, left + col * spacing, 106 + (row - 1) * 28));
+          const kind = row === 1 && (stage >= 41 || stage >= 5 && col % 4 === 1) ? "armored"
+            : row === 2 && (stage >= 21 || col % 3 === 1) ? "interceptor" : "assault";
+          enemies.push(makeEnemy(kind, col, row, left + col * spacing, 106 + (row - 1) * 28));
         }
       }
       for (let row = 3; row <= 4; row++) {
         for (let col = 0; col < 8; col++) {
-          enemies.push(makeEnemy(row === 3 && stage >= 61 ? "phantom" : row === 4 && stage >= 81 ? "elite" : "scout", col, row, left + col * spacing, 170 + (row - 3) * 28));
+          enemies.push(makeEnemy(row === 3 && (stage >= 61 || stage >= 15 && col % 4 === 2) ? "phantom" : row === 4 && stage >= 81 ? "elite" : "scout", col, row, left + col * spacing, 170 + (row - 3) * 28));
         }
       }
+      const captor = enemies.find(e => e.kind === "leader" && e.col === 0);
+      captor.role = "captor";
+      captor.carrying = captivePending;
+      captor.beamCooldown = captivePending ? 99 : 3.2;
+      captor.beam = null;
+      captor.escape = null;
       // Bonus carriers are separate from the four scheduled weapon upgrades.
       if (stage % 7 === 0) {
         const carrier = enemies.find(e => e.kind === "leader" && e.col === 1);
@@ -349,7 +360,8 @@
           [[W / 2, 225], [W / 2 + side * 115, 225], [centerX + side * 90, centerY], [centerX, centerY]]
         ];
         squad.forEach(e => {
-          e.entry = { age: -row * 0.18, duration: 2.0, route, offsetX: e.baseX - centerX, offsetY: 0 };
+          e.entry = { age: -row * 0.18, duration: 2.0, route, offsetX: e.baseX - centerX, offsetY: 0,
+            fireTimes: stage >= 30 ? [.26 + e.col * .035, .58 + e.col * .025] : [.3 + e.col * .055], nextShot: 0 };
           const p = flightPosition(e.entry, 0);
           e.x = p.x; e.y = p.y;
         });
@@ -371,6 +383,7 @@
     stopSounds();
     screenShake = 0;
     respawnDelay = 0;
+    dualFighter = false; captivePending = false; captureAnimation = null;
     score = 0;
     stage = 1;
     lives = 3;
@@ -407,14 +420,12 @@
     };
   }
   function launchGroupAttack() {
-    if (enemies.some(e => e.alive && (e.entry || e.dive))) return;
-    const order = ["scout", "assault",
-      ...(stage >= 21 ? ["interceptor"] : []), ...(stage >= 41 ? ["armored"] : []),
-      ...(stage >= 61 ? ["phantom"] : []), ...(stage >= 81 ? ["elite"] : []), "scout", "leader"];
+    if (enemies.some(e => e.alive && (e.entry || e.dive || e.beam || e.escape))) return;
+    const order = ["leader", "scout", "interceptor", "assault", "leader", "armored", "phantom", "elite", "scout"];
     let available = [];
     for (let attempt = 0; attempt < order.length; attempt++) {
       const kind = order[groupAttackIndex++ % order.length];
-      available = enemies.filter(e => e.alive && !e.entry && !e.dive && e.kind === kind);
+      available = enemies.filter(e => e.alive && !e.entry && !e.dive && e.kind === kind && (e.role !== "captor" || e.carrying || dualFighter || captivePending || lives <= 1));
       if (available.length) break;
     }
     if (!available.length) return;
@@ -422,7 +433,7 @@
     const row = available[0].row;
     available = available.filter(e => e.row === row).sort((a, b) => a.col - b.col);
     const kind = available[0].kind;
-    const count = kind === "leader" ? 1 : Math.min(6, 4 + Math.floor((stage - 1) / 25));
+    const count = kind === "leader" ? 2 : Math.min(6, 4 + Math.floor((stage - 1) / 25));
     const squad = available.slice(0, count);
     const cx = squad.reduce((sum, e) => sum + e.x, 0) / squad.length;
     const cy = squad.reduce((sum, e) => sum + e.y, 0) / squad.length;
@@ -483,13 +494,87 @@
     const pattern = (groupAttackIndex - 1) % flightModes(stage);
     squad.forEach((enemy, index) => {
       enemy.dive = { age: kind === "leader" ? 0 : -index * .16,
-        duration: Math.max(4.7, 6.2 - (stage - 1) * .015) + (pattern === 1 || pattern >= 3 ? 1 : 0),
+        duration: enemy.carrying ? 3.6 : Math.max(4.7, 6.2 - (stage - 1) * .015) + (pattern === 1 || pattern >= 3 ? 1 : 0),
         route, offsetX: enemy.x - cx, offsetY: enemy.y - cy, rearAttack: kind === "leader",
         ribbon: kind !== "leader",
         fireTimes: kind === "leader" ? (stage >= 10 ? [.18, .28, .68] : [.18, .28]) : stage >= 60 ? [.24, .42, .62] : [.34, .55],
         nextShot: 0 };
       enemy.shot = false;
     });
+  }
+
+  function captureFighter(enemy) {
+    if (dualFighter || captivePending || ship.invulnerable > 0 || lives <= 1 || respawnDelay > 0) return;
+    captureAnimation = { x: ship.x, y: ship.y, toX: enemy.x, toY: enemy.y + 26, age: 0 };
+    captivePending = true; enemy.carrying = true;
+    lives -= 1; respawnDelay = 1.1; ship.invulnerable = 2.6;
+    enemyShots = []; resetControls(); ship.x = W / 2;
+    banner = "기체 납치! 보라색 특수기를 격추해서 구출하세요"; bannerTime = 3;
+    sweepVoice(780, 150, .65, "sine", .075, 0, 25);
+  }
+  function updateCaptor(enemy, dt) {
+    if (enemy.escape) {
+      enemy.escape.age += dt; enemy.y -= 360 * dt; enemy.x += Math.sin(enemy.escape.age * 8) * 80 * dt;
+      if (enemy.y < -55) { enemy.alive = false; captivePending = true; }
+      return true;
+    }
+    if (enemy.carrying && !enemies.some(e => e.alive && e !== enemy)) {
+      enemy.entry = null; enemy.dive = null; enemy.beam = null; enemy.escape = { age: 0 };
+      banner = "납치범 도주 · 다음 일반 판에서 구출 재도전"; bannerTime = 2;
+      return true;
+    }
+    if (enemy.beam) {
+      const b = enemy.beam; b.age += dt; enemy.angle = Math.PI;
+      if (b.phase === "approach") {
+        const t = clamp(b.age / 1, 0, 1);
+        enemy.x = b.fromX + (b.x - b.fromX) * t;
+        enemy.y = b.fromY + (b.y - b.fromY) * t;
+        if (t >= 1) { b.phase = "warning"; b.age = 0; }
+      } else if (b.phase === "warning") {
+        if (b.age >= .8) { b.phase = "active"; b.age = 0; sweepVoice(220, 440, .6, "sine", .04, 0, 18); }
+      } else if (b.phase === "active") {
+        if (Math.abs(ship.x - enemy.x) < 36 && ship.y > enemy.y + 35 && ship.y < enemy.y + 210) captureFighter(enemy);
+        if (enemy.carrying || b.age >= 2.1) { b.phase = "return"; b.age = 0; b.fromX = enemy.x; b.fromY = enemy.y; }
+      } else {
+        const t = clamp(b.age / .85, 0, 1);
+        enemy.x = b.fromX + (enemy.baseX - b.fromX) * t;
+        enemy.y = b.fromY + (enemy.baseY - b.fromY) * t;
+        if (t >= 1) { enemy.beam = null; enemy.beamCooldown = 6.5; }
+      }
+      return true;
+    }
+    if (enemy.entry || enemy.dive || enemy.carrying || dualFighter || captivePending || lives <= 1) return false;
+    enemy.beamCooldown -= dt;
+    if (enemy.beamCooldown <= 0 && !enemies.some(e => e.alive && (e.entry || e.dive || e.beam))) {
+      enemy.beam = { phase: "approach", age: 0, fromX: enemy.x, fromY: enemy.y,
+        x: clamp(ship.x, 55, W - 55), y: Math.max(230, ship.y - 180) };
+      banner = "납치 빔 접근 · 좌우로 피하거나 특수기를 격추!"; bannerTime = 2;
+      return true;
+    }
+    return false;
+  }
+  function drawCaptureBeams() {
+    for (const enemy of enemies) {
+      if (!enemy.alive || !enemy.beam || !["warning", "active"].includes(enemy.beam.phase)) continue;
+      const active = enemy.beam.phase === "active";
+      ctx.save(); ctx.translate(enemy.x, enemy.y + 14);
+      const glow = ctx.createLinearGradient(0, 0, 0, 200);
+      glow.addColorStop(0, active ? "rgba(148,100,255,.32)" : "rgba(148,100,255,.05)");
+      glow.addColorStop(1, active ? "rgba(78,231,255,.15)" : "rgba(78,231,255,.03)");
+      ctx.fillStyle = glow; ctx.beginPath(); ctx.moveTo(-8, 0); ctx.lineTo(-42, 196); ctx.lineTo(42, 196); ctx.lineTo(8, 0); ctx.closePath(); ctx.fill();
+      ctx.strokeStyle = active ? "#7de9ff" : "#b6a0df"; ctx.lineWidth = active ? 1.5 : 1;
+      ctx.globalAlpha = active ? .65 : .22 + .15 * Math.sin(elapsed * 16);
+      for (let i = 0; i < 12; i++) {
+        const y = ((i * 17 + elapsed * (active ? -65 : 20)) % 196 + 196) % 196;
+        const w = 8 + y * .17;
+        ctx.beginPath(); ctx.ellipse(0, y, w, 4 + y * .018, 0, 0, Math.PI); ctx.stroke();
+      }
+      ctx.restore();
+    }
+    if (captureAnimation) {
+      const a = captureAnimation, t = clamp(a.age / .7, 0, 1);
+      drawCraft("player", a.x + (a.toX - a.x) * t, a.y + (a.toY - a.y) * t, t * Math.PI * 4, weapon);
+    }
   }
 
   function pushEnemyShot(x, y, angle, speed, color, type = "straight", radius = 2.5) {
@@ -504,7 +589,7 @@
     const angles = stage < 20 ? [0] : enemy.kind === "leader" ? [-.24, 0, .24]
       : heavy ? [-.13, 0, .13] : [0];
     const type = stage >= 65 && ["phantom", "elite"].includes(enemy.kind) ? "homing"
-      : stage >= 35 && ["interceptor", "armored"].includes(enemy.kind) ? "wave" : "straight";
+      : stage >= 8 && ["interceptor", "armored"].includes(enemy.kind) ? "wave" : "straight";
     angles.forEach(offset => pushEnemyShot(enemy.x, enemy.y + 6, baseAngle + offset, speed,
       type === "homing" ? "#9cfde2" : type === "wave" ? "#74cfff" : enemy.kind === "leader" ? "#d28aff" : heavy ? "#ff675c" : "#f0c35b", type));
   }
@@ -765,7 +850,12 @@
     const blink = enemy.flash > 0 && Math.floor(elapsed * 24) % 2 === 0;
     if (blink) return;
     const bob = enemy.dive || enemy.entry ? 0 : Math.sin(elapsed * 2) * 1.5;
-    drawCraft(enemy.kind, enemy.x, enemy.y + bob, enemy.angle || 0);
+    drawCraft(enemy.role === "captor" ? "phantom" : enemy.kind, enemy.x, enemy.y + bob, enemy.angle || 0);
+    if (enemy.role === "captor") {
+      ctx.strokeStyle = "#d6a9ff"; ctx.lineWidth = 1.2;
+      ctx.beginPath(); ctx.ellipse(enemy.x, enemy.y, 18, 12, elapsed * 1.5, 0, Math.PI * 2); ctx.stroke();
+      if (enemy.carrying && !captureAnimation) drawCraft("player", enemy.x, enemy.y + 26, Math.PI, weapon, true);
+    }
     if (enemy.carrier) {
       ctx.fillStyle = enemy.carrier === "life" ? "#92ecff" : "#fff1a3";
       ctx.beginPath();
@@ -802,7 +892,11 @@
   }
   function drawShip() {
     if (respawnDelay > 0 || lives <= 0 || (ship.invulnerable > 0 && Math.floor(elapsed * 13) % 2 === 0)) return;
-    drawCraft("player", ship.x, ship.y, 0, weapon);
+    for (const x of fighterCenters()) drawCraft("player", x, ship.y, 0, weapon);
+    if (dualFighter) {
+      ctx.strokeStyle = "#a5e8ff"; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(ship.x - 6, ship.y + 5); ctx.lineTo(ship.x + 6, ship.y + 5); ctx.stroke();
+    }
   }
   function drawPlasma(shot) {
     ctx.save();
@@ -873,11 +967,11 @@
     for (const item of items) {
       ctx.save(); ctx.translate(item.x, item.y);
       ctx.rotate(Math.sin(elapsed * 5) * .08);
-      ctx.fillStyle = item.type === "life" ? "#213c60" : item.type === "weapon" ? "#9f7730" : "#745820";
-      ctx.strokeStyle = item.type === "life" ? "#8ce7ff" : "#fce199";
+      ctx.fillStyle = ["life", "rescue"].includes(item.type) ? "#213c60" : item.type === "weapon" ? "#9f7730" : "#745820";
+      ctx.strokeStyle = ["life", "rescue"].includes(item.type) ? "#8ce7ff" : "#fce199";
       ctx.lineWidth = 1;
       ctx.fillRect(-11, -11, 22, 22); ctx.strokeRect(-11, -11, 22, 22);
-      if (item.type === "life") drawCraft("player", 0, 0, 0, 1, true);
+      if (["life", "rescue"].includes(item.type)) drawCraft("player", 0, 0, 0, 1, true);
       else {
         ctx.fillStyle = "#fff1ae"; ctx.font = "bold 10px ui-monospace, monospace";
         ctx.textAlign = "center"; ctx.textBaseline = "middle";
@@ -1039,6 +1133,11 @@
       score += points + (enemy.dive ? 25 : 0);
       addExplosion(enemy.x, enemy.y, enemy.kind === "leader" ? "#bd78ed" : enemy.kind === "assault" ? "#f16b59" : "#e9c45a");
       explosionSound(enemy.kind);
+      if (enemy.carrying) {
+        enemy.carrying = false; captivePending = false;
+        items.push({ x: enemy.x, y: enemy.y + 26, vy: 95, type: "rescue" });
+        banner = "기체 구출! 내려오는 기체를 받아주세요"; bannerTime = 2;
+      }
       if (enemy.carrier) {
         items.push({ x: enemy.x, y: enemy.y + 8, vy: 75, type: enemy.carrier });
       }
@@ -1060,20 +1159,25 @@
       boss = null;
     }
   }
+  function fighterCenters() { return dualFighter ? [ship.x - 16, ship.x + 16] : [ship.x]; }
+  function playerDistance(x, y) { return Math.min(...fighterCenters().map(cx => distance(x, y, cx, ship.y))); }
   function shootPlayer() {
+    for (const x of fighterCenters()) shootPlayerAt(x);
+    weaponSound(weapon);
+  }
+  function shootPlayerAt(x) {
     const speed = 300;
     if (weapon === 1) {
-      playerShots.push({ x: ship.x, y: ship.y - 17, vy: -speed, type: "bullet", color: "#6de7ff", r: 3 });
+      playerShots.push({ x: x, y: ship.y - 17, vy: -speed, type: "bullet", color: "#6de7ff", r: 3 });
     } else if (weapon === 2 || weapon === 3) {
       const offset = weapon === 2 ? 7 : 8;
-      playerShots.push({ x: ship.x - offset, y: ship.y - 15, vy: -speed, type: "bullet", color: weapon === 3 ? "#a1f2ff" : "#6de7ff", r: 3 });
-      playerShots.push({ x: ship.x + offset, y: ship.y - 15, vy: -speed, type: "bullet", color: weapon === 3 ? "#a1f2ff" : "#6de7ff", r: 3 });
+      playerShots.push({ x: x - offset, y: ship.y - 15, vy: -speed, type: "bullet", color: weapon === 3 ? "#a1f2ff" : "#6de7ff", r: 3 });
+      playerShots.push({ x: x + offset, y: ship.y - 15, vy: -speed, type: "bullet", color: weapon === 3 ? "#a1f2ff" : "#6de7ff", r: 3 });
     } else if (weapon === 4) {
-      playerShots.push({ x: ship.x, y: ship.y - 14, vy: -speed * 1.3, type: "laser", length: H * .54, ttl: .2, hitIds: new Set() });
+      playerShots.push({ x: x, y: ship.y - 14, vy: -speed * 1.3, type: "laser", length: H * .54, ttl: .2, hitIds: new Set() });
     } else {
-      playerShots.push({ x: ship.x, y: ship.y - 16, vy: -250, type: "plasma", r: 7, ttl: 3 });
+      playerShots.push({ x: x, y: ship.y - 16, vy: -250, type: "plasma", r: 7, ttl: 3 });
     }
-    weaponSound(weapon);
   }
   function upgradeWeapon(level) {
     if (level <= weapon) return;
@@ -1085,8 +1189,15 @@
     tone(660, .08, "square", .04);
     window.setTimeout(() => tone(880, .11, "square", .04), 70);
   }
-  function loseLife() {
+  function loseLife(impactX = ship.x) {
     if (ship.invulnerable > 0 || state !== "playing") return;
+    if (dualFighter) {
+      cinematicExplosion(ship.x + (impactX < ship.x ? -16 : 16), ship.y, "player");
+      dualFighter = false; ship.invulnerable = 1.5;
+      enemyShots = []; playerImpactFeedback();
+      banner = "기체 1대 손실 · 단독 비행"; bannerTime = 1.5;
+      return;
+    }
     lives -= 1;
     const hitX = ship.x, hitY = ship.y;
     ship.vx = 0;
@@ -1109,6 +1220,10 @@
     if (state === "paused") return;
     screenShake = Math.max(0, screenShake - dt);
     updateEffects(dt);
+    if (captureAnimation) {
+      captureAnimation.age += dt;
+      if (captureAnimation.age >= .7) captureAnimation = null;
+    }
     if (state !== "playing") return;
     elapsed += dt;
     if (bannerTime > 0) bannerTime -= dt;
@@ -1125,7 +1240,7 @@
     // Input determines velocity in this frame; retain the existing top speed.
     const inputAxis = clamp(axis, -1, 1);
     ship.vx = respawnDelay > 0 || Math.abs(inputAxis) < 0.08 ? 0 : inputAxis * 165;
-    ship.x = clamp(ship.x + ship.vx * dt, 19, W - 19);
+    ship.x = clamp(ship.x + ship.vx * dt, dualFighter ? 35 : 19, W - (dualFighter ? 35 : 19));
     if ((ship.x <= 19 && ship.vx < 0) || (ship.x >= W - 19 && ship.vx > 0)) ship.vx = 0;
 
     fireCooldown -= dt;
@@ -1155,6 +1270,7 @@
     for (const enemy of enemies) {
       if (!enemy.alive) continue;
       enemy.flash = Math.max(0, enemy.flash - dt);
+      if (enemy.role === "captor" && updateCaptor(enemy, dt)) continue;
       const flight = enemy.entry || enemy.dive;
       if (!flight) {
         enemy.x = enemy.baseX + Math.sin(elapsed * .65) * 5;
@@ -1169,6 +1285,12 @@
         enemy.x = position.x;
         enemy.y = position.y;
         enemy.angle = Math.atan2(ahead.x - position.x, -(ahead.y - position.y));
+        if (enemy.entry && flight.nextShot < flight.fireTimes.length && p >= flight.fireTimes[flight.nextShot]) {
+          // Every entrant has a staggered volley, away from the player's rear.
+          if (enemy.x > 12 && enemy.x < W - 12 && enemy.y < ship.y - 100) {
+            enemyFire(enemy); flight.nextShot += 1;
+          }
+        }
         if (enemy.dive && flight.nextShot < flight.fireTimes.length && p >= flight.fireTimes[flight.nextShot]) {
           const rearVolley = flight.rearAttack && flight.nextShot === 2;
           // Early stages fire only with space in front; rear fire unlocks at stage 10.
@@ -1182,7 +1304,7 @@
           enemy.x = enemy.baseX; enemy.y = enemy.baseY; enemy.angle = 0;
         }
       }
-      if (ship.invulnerable <= 0 && distance(enemy.x, enemy.y, ship.x, ship.y) < 18) loseLife();
+      if (ship.invulnerable <= 0 && playerDistance(enemy.x, enemy.y) < 18) loseLife(enemy.x);
     }
 
     for (const shot of playerShots) {
@@ -1236,7 +1358,7 @@
 
     if (ship.invulnerable <= 0) {
       for (const shot of enemyShots) {
-        if (distance(shot.x, shot.y, ship.x, ship.y) < 15) { shot.dead = true; loseLife(); break; }
+        if (playerDistance(shot.x, shot.y) < 15) { shot.dead = true; loseLife(shot.x); break; }
       }
     }
     enemyShots = enemyShots.filter(s => !s.dead && s.y < H + 15 && s.x > -15 && s.x < W + 15);
@@ -1245,11 +1367,17 @@
       item.y += item.vy * dt;
       if (respawnDelay <= 0 && distance(item.x, item.y, ship.x, ship.y) < 25) {
         item.caught = true;
-        if (item.type === "weapon") upgradeWeapon(item.level);
+        if (item.type === "rescue") {
+          captivePending = false; dualFighter = true; ship.invulnerable = 1.5;
+          ship.x = clamp(ship.x, 35, W - 35);
+          banner = "구출 성공 · 듀얼 파이터!"; bannerTime = 2;
+          sweepVoice(330, 990, .4, "triangle", .06);
+        } else if (item.type === "weapon") upgradeWeapon(item.level);
         else if (item.type === "life") { lives += 1; banner = "보너스 기체 · 생명 +1"; bannerTime = 2; tone(1040, .16, "sine", .06); }
         else { score += 500; banner = "보너스 점수 +500"; bannerTime = 1.7; tone(760, .12, "sine", .05); }
       }
     }
+    for (const item of items) if (!item.caught && item.type === "rescue" && item.y >= H + 12) captivePending = true;
     items = items.filter(item => !item.caught && item.y < H + 12);
 
     if (state !== "playing") return;
@@ -1277,6 +1405,7 @@
     if (boss) drawBoss();
     drawShots();
     drawItems();
+    drawCaptureBeams();
     drawParticles();
     drawBursts();
     drawShip();
