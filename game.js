@@ -61,6 +61,8 @@
   let fireButton = { x: W - 65, y: 0, pointer: null, pressed: false, flash: 0 };
   let soundEnabled = readNumber("ss-sound", 1) === 1;
   let audioContext = null;
+  let audioUnlockElement = null;
+  let audioNeedsReset = false;
   let audioOutput = null;
   let noiseBuffer = null;
   const activeSoundSources = new Set();
@@ -92,10 +94,13 @@
 
   function resize() {
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    scale = window.innerWidth / W;
-    H = window.innerHeight / scale;
-    canvas.width = Math.round(window.innerWidth * dpr);
-    canvas.height = Math.round(window.innerHeight * dpr);
+    const rect = canvas.getBoundingClientRect();
+    const width = rect.width || window.innerWidth;
+    const height = rect.height || window.innerHeight;
+    scale = width / W;
+    H = height / scale;
+    canvas.width = Math.round(width * dpr);
+    canvas.height = Math.round(height * dpr);
     ctx.setTransform(dpr * scale, 0, 0, dpr * scale, 0, 0);
     ctx.imageSmoothingEnabled = false;
     ship.y = H - 160;
@@ -111,6 +116,7 @@
   }
   window.addEventListener("resize", resize);
   resize();
+  if (window.visualViewport) window.visualViewport.addEventListener("resize", resize);
 
   function initAudio(testSound = false) {
     if (!soundEnabled) return;
@@ -124,6 +130,15 @@
 
     };
     try {
+      unlockAudioRoute();
+      if (audioContext && (audioNeedsReset || audioContext.state === "interrupted")) {
+        stopAudioSources();
+        const oldContext = audioContext;
+        audioContext = null; audioOutput = null; noiseBuffer = null;
+        const closed = oldContext.close();
+        if (closed && closed.catch) closed.catch(() => {});
+      }
+      audioNeedsReset = false;
       if (!audioContext || audioContext.state === "closed") {
         audioContext = new AudioCtor();
         audioOutput = null; noiseBuffer = null;
@@ -140,6 +155,20 @@
       }
     } catch (_) {
       if (state === "playing") { banner = "소리를 켜려면 ♪ 버튼을 눌러 주세요"; bannerTime = 2; }
+    }
+  }
+  function unlockAudioRoute() {
+    if (document.hidden) return;
+    if (!audioUnlockElement) {
+      audioUnlockElement = document.createElement("audio");
+      audioUnlockElement.src = "./audio-unlock-v16.wav";
+      audioUnlockElement.preload = "auto";
+      audioUnlockElement.loop = true;
+      audioUnlockElement.setAttribute("playsinline", "");
+    }
+    if (audioUnlockElement.paused) {
+      const playing = audioUnlockElement.play();
+      if (playing && playing.catch) playing.catch(() => {});
     }
   }
   function prepareAudioOutput() {
@@ -268,9 +297,13 @@
       sweepVoice(170, 55, .2, "triangle", .13);
     }
   }
-  function stopSounds() {
+  function stopAudioSources() {
     for (const source of activeSoundSources) { try { source.stop(); } catch (_) {} }
     activeSoundSources.clear();
+  }
+  function stopSounds() {
+    stopAudioSources();
+    if (audioUnlockElement) { try { audioUnlockElement.pause(); } catch (_) {} }
   }
   function playerImpactFeedback() {
     screenShake = .18;
@@ -279,7 +312,7 @@
   function toggleSound() {
     soundEnabled = !soundEnabled;
     writeNumber("ss-sound", soundEnabled ? 1 : 0);
-    if (soundEnabled) initAudio(true);
+    if (soundEnabled) { audioNeedsReset = true; initAudio(true); }
     else stopSounds();
   }
 
@@ -902,7 +935,7 @@
     ctx.textBaseline = "bottom";
     ctx.font = "8px ui-monospace, monospace";
     ctx.fillStyle = "#c6d3d3";
-    ctx.fillText(boss.name, W / 2, y - 2);
+
   }
   function drawShip() {
     if (respawnDelay > 0 || lives <= 0 || (ship.invulnerable > 0 && Math.floor(elapsed * 13) % 2 === 0)) return;
@@ -1048,23 +1081,14 @@
     ctx.fillText(banner, W / 2, H * 0.42);
     ctx.globalAlpha = 1;
   }
-  function drawOverlay(title, subtitle, action) {
-    ctx.fillStyle = "rgba(0,0,0,.7)";
-    ctx.fillRect(26, H * 0.36, W - 52, 140);
-    ctx.strokeStyle = "#33445a";
-    ctx.lineWidth = 1;
-    ctx.strokeRect(26.5, H * 0.36 + .5, W - 53, 139);
+  function drawOverlay(title) {
+    ctx.fillStyle = "rgba(0,0,0,.65)";
+    ctx.fillRect(26, H * .36, W - 52, 140);
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.fillStyle = "#e5eaf0";
     ctx.font = "bold 19px ui-monospace, monospace";
-    ctx.fillText(title, W / 2, H * 0.36 + 42);
-    ctx.fillStyle = "#aab7c7";
-    ctx.font = "11px ui-monospace, monospace";
-    ctx.fillText(subtitle, W / 2, H * 0.36 + 73);
-    ctx.fillStyle = "#e6c45f";
-    ctx.font = "bold 12px ui-monospace, monospace";
-    ctx.fillText(action, W / 2, H * 0.36 + 108);
+    ctx.fillText(title, W / 2, H * .36 + 70);
   }
 
   function addExplosion(x, y, color, count = 8) {
@@ -1427,10 +1451,10 @@
     drawBursts();
     drawShip();
     drawControls();
-    if (state === "title") drawOverlay("STAR SQUADRON", "편대 공격을 돌파하고 무기를 강화하세요", "화면을 눌러 시작 · 좌우 조이스틱 / 발사 버튼");
-    if (state === "victory") drawOverlay("MISSION COMPLETE", `100판 클리어 · SCORE ${score}`, "화면을 눌러 처음부터");
-    if (state === "gameover") drawOverlay("GAME OVER", `SCORE ${String(score).padStart(6, "0")}  ·  BEST ${String(highScore).padStart(6, "0")}`, "화면을 눌러 다시 시작");
-    if (state === "paused") drawOverlay("PAUSED", "게임이 잠시 멈췄습니다", "이 안내창을 눌러 계속");
+    if (state === "title") drawOverlay("STAR SQUADRON");
+    if (state === "victory") drawOverlay("CLEAR");
+    if (state === "gameover") drawOverlay("GAME OVER");
+    if (state === "paused") drawOverlay("PAUSED");
     ctx.restore();
   }
 
@@ -1451,6 +1475,7 @@
     state = "paused";
     resetControls();
     stopSounds();
+    audioNeedsReset = true;
   }
   function resumeGame() {
     if (state !== "paused") return;
@@ -1556,10 +1581,10 @@
     if (state === "playing") keys.add(event.key);
   });
   window.addEventListener("keyup", event => keys.delete(event.key));
-  window.addEventListener("blur", () => { pauseGame(); resetControls(); });
-  window.addEventListener("pagehide", () => { pauseGame(); resetControls(); });
+  window.addEventListener("blur", () => { pauseGame(); stopSounds(); audioNeedsReset = true; resetControls(); });
+  window.addEventListener("pagehide", () => { pauseGame(); stopSounds(); audioNeedsReset = true; resetControls(); });
   document.addEventListener("visibilitychange", () => {
-    if (document.hidden) { pauseGame(); resetControls(); }
+    if (document.hidden) { pauseGame(); stopSounds(); audioNeedsReset = true; resetControls(); }
   });
 
   function frame(now) {
