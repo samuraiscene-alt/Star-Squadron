@@ -103,21 +103,37 @@
   window.addEventListener("resize", resize);
   resize();
 
-  function initAudio() {
+  function initAudio(testSound = false) {
     if (!soundEnabled) return;
     const AudioCtor = window.AudioContext || window.webkitAudioContext;
     if (!AudioCtor) return;
+    // iPhone: request media playback instead of the default ambient audio category.
+    try { if (navigator.audioSession) navigator.audioSession.type = "playback"; } catch (_) {}
+    const ready = () => {
+      if (!soundEnabled || !audioContext || audioContext.state !== "running") return;
+      if (testSound) tone(880, .16, "sine", .06, true);
+      if (state === "paused" || state === "gameover") return;
+      startMusic();
+    };
     try {
-      if (!audioContext) audioContext = new AudioCtor();
-      if (audioContext.state !== "running") {
+      if (!audioContext || audioContext.state === "closed") audioContext = new AudioCtor();
+      if (audioContext.state === "running") ready();
+      else {
         const resume = audioContext.resume();
-        if (resume && resume.catch) resume.catch(() => {});
+        if (resume && resume.then) resume.then(ready).catch(() => {
+          if (state === "playing") { banner = "소리를 켜려면 ♪ 버튼을 눌러 주세요"; bannerTime = 2; }
+        });
+        else ready();
       }
-    } catch (_) { return; }
+    } catch (_) {
+      if (state === "playing") { banner = "소리를 켜려면 ♪ 버튼을 눌러 주세요"; bannerTime = 2; }
+    }
+  }
+  function startMusic() {
     if (!musicTimer) {
       const notes = [196, 247, 294, 247, 220, 262, 330, 262];
       musicTimer = window.setInterval(() => {
-        if (!soundEnabled || state !== "playing" || !audioContext) return;
+        if (!soundEnabled || state !== "playing" || !audioContext || audioContext.state !== "running") return;
         const osc = audioContext.createOscillator();
         const gain = audioContext.createGain();
         osc.type = "square";
@@ -131,8 +147,8 @@
       }, 165);
     }
   }
-  function tone(freq, duration = 0.07, type = "square", volume = 0.04) {
-    if (!soundEnabled || !audioContext || state !== "playing") return;
+  function tone(freq, duration = 0.07, type = "square", volume = 0.04, preview = false) {
+    if (!soundEnabled || !audioContext || audioContext.state !== "running" || (!preview && state !== "playing")) return;
     const osc = audioContext.createOscillator();
     const gain = audioContext.createGain();
     const now = audioContext.currentTime;
@@ -147,7 +163,7 @@
   function toggleSound() {
     soundEnabled = !soundEnabled;
     writeNumber("ss-sound", soundEnabled ? 1 : 0);
-    if (soundEnabled) initAudio();
+    if (soundEnabled) initAudio(true);
     else stopMusic();
   }
 
@@ -221,7 +237,6 @@
   }
   function beginGame() {
     resetControls();
-    initAudio();
     score = 0;
     stage = 1;
     lives = 3;
@@ -232,6 +247,7 @@
     state = "playing";
     fireCooldown = 0;
     startStage();
+    initAudio(true);
   }
 
   function curvedRoute(points) {
