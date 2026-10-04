@@ -57,7 +57,7 @@
   let specialFields = [];
   let specialCooldown = 0;
   let specialDropTimer = 0;
-  const specialButton = { x: W / 2, y: 0 };
+  const specialButtons = [{ type: "flash", x: W / 2 - 42, y: 0 }, { type: "emp", x: W / 2 + 42, y: 0 }];
   let respawnDelay = 0;
   let dualFighter = false;
   let captivePending = false;
@@ -116,7 +116,7 @@
     joy.y = H - 75;
     fireButton.x = W - 65;
     fireButton.y = H - 75;
-    specialButton.y = H - 32;
+    specialButtons.forEach(button => { button.y = H - 34; });
     stars = Array.from({ length: 64 }, () => ({
       x: rand(4, W - 4), y: rand(0, H), size: Math.random() < 0.8 ? 1.5 : 2.2,
       color: ["#758599", "#5875a3", "#8b7770"][Math.floor(Math.random() * 3)],
@@ -791,9 +791,11 @@
     if (ship.invulnerable <= 0 && playerDistance(e.x, e.y) < 18) loseLife(e.x);
   }
 
-  function fireSpecial() {
+  function fireSpecial(type = specialAmmo[0]) {
     if (state !== "playing" || respawnDelay > 0 || specialCooldown > 0 || !specialAmmo.length) return;
-    const type = specialAmmo.shift(); specialCooldown = .5;
+    const index = specialAmmo.indexOf(type);
+    if (index < 0) return;
+    specialAmmo.splice(index, 1); specialCooldown = .5;
     specialShots.push({ x: ship.x, y: ship.y - 20, targetY: Math.max(150, ship.y - 230), type });
     sweepVoice(280, 740, .2, "sine", .05);
   }
@@ -1354,17 +1356,22 @@
     ctx.restore();
   }
   function drawSpecialButton() {
-    ctx.save();ctx.translate(specialButton.x,specialButton.y);
-    ctx.fillStyle="#0a1523";ctx.strokeStyle=specialAmmo.length?"#91d7ed":"#465667";ctx.lineWidth=1.5;
-    ctx.beginPath();ctx.arc(0,0,22,0,Math.PI*2);ctx.fill();ctx.stroke();
-    ctx.fillStyle=specialAmmo.length?"#ddf7ff":"#627080";ctx.textAlign="center";ctx.textBaseline="middle";ctx.font="bold 9px sans-serif";
-    ctx.font="bold 7px sans-serif";ctx.fillText(specialAmmo[0]==="emp"?"EMP":specialAmmo[0]==="flash"?"FLASH":"특수",0,-11);
-    for(let slot=0;slot<2;slot++){
-      const x=slot?10:-10;ctx.strokeStyle=specialAmmo[slot]?(slot===0?"#f4ffff":"#768d9e"):"#354555";ctx.lineWidth=slot===0&&specialAmmo[0]?1.5:1;
-      ctx.beginPath();ctx.arc(x,6,8.5,0,Math.PI*2);ctx.stroke();
-      if(specialAmmo[slot])drawSpecialIcon(specialAmmo[slot],x,6,5.5);
+    for (const button of specialButtons) {
+      const count = specialAmmo.filter(type => type === button.type).length;
+      const color = button.type === "emp" ? "#86dcff" : "#ffe39a";
+      ctx.save(); ctx.translate(button.x, button.y);
+      ctx.fillStyle = "#0a1523"; ctx.strokeStyle = count ? color : "#465667"; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(0, 0, 28, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+      ctx.globalAlpha = count ? (specialCooldown > 0 ? .55 : 1) : .3;
+      drawSpecialIcon(button.type, 0, -6, 9);
+      ctx.fillStyle = color; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.font = "bold 9px sans-serif";
+      ctx.fillText(button.type === "emp" ? "EMP" : "섬광탄", 0, 10);
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = count ? color : "#627080";
+      ctx.font = "bold 10px sans-serif"; ctx.fillText(String(count), 18, -17);
+      ctx.restore();
     }
-    ctx.restore();
   }
   function drawBanner() {
     if (bannerTime <= 0 || !banner) return;
@@ -1971,7 +1978,8 @@
     if (state === "victory") beginGame();
     if (state !== "playing") return;
     initAudio();
-    if (distance(p.x,p.y,specialButton.x,specialButton.y)<26) { fireSpecial();return; }
+    const special = specialButtons.find(button => distance(p.x, p.y, button.x, button.y) < 32);
+    if (special) { fireSpecial(special.type); return; }
     if (distance(p.x, p.y, joy.x, joy.y) < 48 && joy.pointer === null) {
       joy.pointer = event.pointerId;
       joy.knobX = clamp(p.x - joy.x, -19, 19);

@@ -1,0 +1,15 @@
+const fs=require('fs'),vm=require('vm'),assert=require('assert'),{createCanvas}=require('@napi-rs/canvas');
+const canvas=createCanvas(360,780);canvas.addEventListener=()=>{};canvas.getBoundingClientRect=()=>({left:0,top:0,width:360,height:780});
+const math=Object.create(Math);math.random=()=>0;
+const sandbox={Math:math,Set,Map,window:{devicePixelRatio:1,addEventListener(){},setTimeout(){}},document:{getElementById:()=>canvas,createElement:()=>createCanvas(1,1),addEventListener(){}},navigator:{},location:{protocol:'file:'},localStorage:{getItem:()=>null,setItem(){}},requestAnimationFrame(){}};
+let source=fs.readFileSync(require('path').join(__dirname,'../game.js'),'utf8').replace(/\}\)\(\);\s*$/,`globalThis.g={beginGame,startStage,update,pauseGame,resumeGame,specialBurst,drawSpecials,drawSpecialButton,drawItems,specialDropRules,trySpecialDrop,pointerDown,pointerUp,fireSpecial,resize,get:()=>({H,items,specialAmmo,specialDropTimer,specialFields,specialShots,specialCooldown,specialButtons,joy,fireButton,ship}),setStage:n=>{stage=n;startStage()},ammo:a=>specialAmmo=a};})();`);
+vm.runInNewContext(source,sandbox);const g=sandbox.g;
+const tap=(button,id=5)=>g.pointerDown({clientX:button.x,clientY:button.y,pointerId:id,preventDefault(){}});
+g.beginGame();let s=g.get();const flash=s.specialButtons.find(b=>b.type==='flash'),emp=s.specialButtons.find(b=>b.type==='emp');
+for(const b of s.specialButtons){assert(b.y+32<=s.H);for(const control of [s.joy,s.fireButton])assert(Math.hypot(b.x-control.x,b.y-control.y)>32+48,'nonoverlapping touch regions');}
+assert(Math.abs(emp.x-flash.x)>64,'gap between separate touch regions');
+g.ammo(['emp','flash']);tap(flash);assert.equal(g.get().specialShots[0].type,'flash','choose second acquired weapon directly');assert.equal(g.get().specialAmmo.join(','),'emp');tap(emp);assert.equal(g.get().specialAmmo.length,1,'shared .5 cooldown');g.get().ship.invulnerable=999;g.update(.6);tap(emp);assert.equal(g.get().specialShots.at(-1).type,'emp');assert.equal(g.get().specialAmmo.length,0);
+g.beginGame();g.ammo(['emp','emp']);tap(flash);assert.equal(g.get().specialAmmo.length,2,'empty flash does not consume EMP');assert.equal(g.get().specialCooldown,0);tap(emp);assert.equal(g.get().specialAmmo.length,1);g.get().ship.invulnerable=999;g.update(.6);tap(emp);assert.equal(g.get().specialAmmo.length,0);
+g.beginGame();g.ammo(['flash','emp']);tap(g.get().joy,10);tap(g.get().fireButton,11);tap(emp,12);assert.equal(g.get().joy.pointer,10);assert.equal(g.get().fireButton.pointer,11);assert(g.get().fireButton.pressed);assert.equal(g.get().specialShots.at(-1).type,'emp','three concurrent controls');g.pointerUp({pointerId:12,preventDefault(){}});assert.equal(g.get().joy.pointer,10);assert.equal(g.get().fireButton.pointer,11);
+const ctx=canvas.getContext('2d');ctx.fillStyle='#07101a';ctx.fillRect(0,0,360,780);g.ammo(['flash','emp']);g.drawSpecialButton();fs.writeFileSync('/tmp/v30-special-buttons.png',canvas.toBuffer('image/png'));
+console.log('PASS: independent selection, same-type two uses, absent type no-op, shared cooldown, separated touch regions and simultaneous movement/fire/special');
