@@ -5,7 +5,7 @@
   const ctx = canvas.getContext("2d", { alpha: false });
   const W = 360;
   const FINAL_STAGE = 100;
-  const WEAPON_EVENTS = { 10: 2, 20: 3, 30: 4, 40: 5 };
+  const WEAPON_EVENTS = { 10: 2, 20: 3, 30: 4, 40: 5, 60: 6 };
   const cinema = window.SquadronCinema;
   const keys = new Set();
   const useTouchInput = "ontouchstart" in window;
@@ -962,7 +962,7 @@
       : kind === "boss" ? (level === 4 ? ["#6b292c", "#ffe4c1", "#d36d52"]
         : level === 3 ? ["#42325e", "#f0d4ff", "#9370bd"]
         : level === 2 ? ["#213e68", "#c8f7ff", "#5494bc"] : ["#193a4c", "#b0f7eb", "#388c8b"])
-      : level === 5 ? ["#263b67", "#e2efff", "#977ae9"] : ["#233c62", "#eef8ff", "#5f9bd0"];
+      : level >= 5 ? ["#263b67", "#e2efff", "#977ae9"] : ["#233c62", "#eef8ff", "#5f9bd0"];
     const metal = paint.createLinearGradient(-17, -15, 16, 18);
     metal.addColorStop(0, colors[1]); metal.addColorStop(.35, colors[2]); metal.addColorStop(1, colors[0]);
     const hull = paint.createLinearGradient(-5, -20, 8, 18);
@@ -1016,7 +1016,7 @@
         panel([[-2, -22], [2, -22], [2.6, -12], [-2.6, -12]], "#9bd4e5");
         paint.fillStyle = "#b8ffff"; paint.fillRect(-1, -23, 2, 3);
       }
-      if (level === 5) {
+      if (level >= 5) {
         for (const side of [-1, 1]) {
           panel([[side * 8, -4], [side * 20, -10], [side * 21, 7], [side * 15, 12], [side * 8, 6]], metal);
           line([[side * 18, -7], [side * 18, 6]], "#98f6ff", 1);
@@ -1138,7 +1138,7 @@
     }
     const logicalSize = art.width / 4;
     ctx.drawImage(art, -logicalSize / 2, -logicalSize / 2, logicalSize, logicalSize);
-    if (kind === "player" && level === 5 && !miniature && !captured) {
+    if (kind === "player" && level >= 5 && !miniature && !captured) {
       ctx.globalCompositeOperation = "lighter";
       ctx.strokeStyle = "#8af8ff"; ctx.lineWidth = .8;
       ctx.beginPath(); ctx.ellipse(0, 1, 6, 3, elapsed * 2, 0, Math.PI * 2); ctx.stroke();
@@ -1223,6 +1223,7 @@
       ctx.strokeStyle = "#b28aff";
       ctx.beginPath(); ctx.arc(0, 0, 6 + p * 30, 0, Math.PI * 2); ctx.stroke();
     } else {
+      ctx.rotate(Math.atan2(shot.vx || 0, -shot.vy));
       // Twin flowing energy trails, a bright core and counter-rotating containment rings.
       for (let trail = 0; trail < 9; trail++) {
         const y = trail * 7;
@@ -1612,13 +1613,36 @@
     } else if (weapon === 4) {
       playerShots.push({ x: x, y: ship.y - 14, vy: -speed * 1.3, type: "laser", length: H * .54, ttl: .2, hitIds: new Set() });
     } else {
-      playerShots.push({ x: x, y: ship.y - 16, vy: -250, type: "plasma", r: 7, ttl: 3 });
+      const y = ship.y - 16;
+      const guided = weapon >= 6;
+      const candidates = guided ? [...enemies.filter(e => e.alive), ...(boss ? [boss] : [])]
+        .filter(e => e.y < y - 20 && e.y > 30 && e.x >= 0 && e.x <= W && Math.abs(e.x - x) <= 110 && distance(e.x, e.y, x, y) <= 300) : [];
+      const target = candidates.sort((a, b) => distance(a.x, a.y, x, y) - distance(b.x, b.y, x, y))[0] || null;
+      playerShots.push({ x, y, vx: 0, vy: -speed, speed, type: "plasma", r: 7, ttl: 3,
+        guided, target, age: 0, guidanceEnded: !target });
     }
+  }
+  function updatePlasmaGuidance(shot, dt) {
+    shot.age += dt;
+    if (!shot.guided || shot.guidanceEnded || shot.exploded) return;
+    const target = shot.target;
+    const alive = target && (target === boss || (target.alive && enemies.includes(target)));
+    if (!alive || shot.y <= target.y || shot.age > .9) {
+      shot.guidanceEnded = true;
+      shot.target = null;
+      return;
+    }
+    // One forward target, limited steering: fast enemies can evade the shot.
+    const angle = Math.atan2(shot.vx, -shot.vy);
+    const desired = clamp(Math.atan2(target.x - shot.x, shot.y - target.y), -.35, .35);
+    const next = angle + clamp(desired - angle, -.45 * dt, .45 * dt);
+    shot.vx = Math.sin(next) * shot.speed;
+    shot.vy = -Math.cos(next) * shot.speed;
   }
   function upgradeWeapon(level) {
     if (level <= weapon) return;
     weapon = level;
-    const labels = ["", "기본탄", "쌍발탄", "기관포", "레이저", "플라즈마"];
+    const labels = ["", "기본탄", "쌍발탄", "기관포", "레이저", "플라즈마", "유도 플라즈마"];
     banner = `무기 업그레이드 · ${labels[weapon]}`;
     bannerTime = 1.7;
     score += 300;
@@ -1689,7 +1713,7 @@
     const keyboardFire = keys.has(" ") || keys.has("Spacebar");
     if (respawnDelay <= 0 && (fireButton.pressed || keyboardFire) && fireCooldown <= 0) {
       shootPlayer();
-      fireCooldown = weapon === 3 ? .18 : weapon === 4 ? .30 : weapon === 5 ? .62 : .38;
+      fireCooldown = weapon === 3 ? .18 : weapon === 4 ? .30 : weapon >= 5 ? .45 : .38;
     }
 
     if (!bossStage) {
@@ -1767,6 +1791,8 @@
 
     if (state !== "playing") return;
     for (const shot of playerShots) {
+      if (shot.type === "plasma") updatePlasmaGuidance(shot, dt);
+      shot.x += (shot.vx || 0) * dt;
       shot.y += shot.vy * dt;
       if (shot.type === "laser") shot.ttl -= dt;
       if (shot.type === "plasma") shot.ttl -= dt;

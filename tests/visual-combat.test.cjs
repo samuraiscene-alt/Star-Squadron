@@ -21,7 +21,7 @@ for(const stage of [1,5,6,15,16,29,31,32,51,61,81,91,99]){
   for(const e of flying)assert(Number.isFinite(e.x)&&Number.isFinite(e.y));
  }
 }
-for(let level=1;level<=5;level++){
+for(let level=1;level<=6;level++){
  const normal=g.craftImage('player',level);const gray=g.capturedCraftImage(level);assert.equal(g.capturedCraftImage(level),gray,'reuse grayscale artwork');
  const orig=normal.getContext('2d').getImageData(0,0,normal.width,normal.height).data;const pixels=gray.getContext('2d').getImageData(0,0,gray.width,gray.height).data;let count=0,color=0;
  for(let i=0;i<pixels.length;i+=4){if(pixels[i+3]>20){assert(Math.abs(pixels[i]-pixels[i+1])<=1);assert(Math.abs(pixels[i+1]-pixels[i+2])<=1);count++;}if(orig[i+3]>100&&Math.abs(orig[i]-orig[i+2])>10)color++;}
@@ -32,4 +32,4 @@ for(let i=0;i<33;i++)g.update(1/60);g.render(0);fs.writeFileSync('/tmp/v19-spinn
 for(let i=0;i<40;i++)g.update(1/60);g.render(0);fs.writeFileSync('/tmp/v19-gray.png',canvas.toBuffer('image/png'));
 g.damageEnemy(captor,999);let rescue=g.get().items.find(e=>e.type==='rescue');assert(rescue);g.update(.35);rescue.y=g.get().ship.y;g.get().ship.x=rescue.x;g.update(.01);assert(g.get().dualFighter);g.render(0);fs.writeFileSync('/tmp/v19-rescued.png',canvas.toBuffer('image/png'));
 g.beginGame();g.get().ship.invulnerable=999;for(let i=0;i<180;i++)g.update(1/60);for(const enemy of g.get().enemies.slice(0,3))g.damageEnemy(enemy,999);assert.equal(g.get().bursts.length,3);assert(g.get().particles.length>=90);g.update(.15);g.render(0);fs.writeFileSync('/tmp/v19-bursts.png',canvas.toBuffer('image/png'));g.update(1);assert.equal(g.get().bursts.length,0);
-console.log('PASS: simultaneous varied routes, bounded flyers/shooters in thirteen stages, true grayscale for all five weapons, rotating pull/gray docking/color rescue renders, layered bounded explosions');
+console.log('PASS: simultaneous varied routes, bounded flyers/shooters in thirteen stages, true grayscale for all six weapons, rotating pull/gray docking/color rescue renders, layered bounded explosions');
