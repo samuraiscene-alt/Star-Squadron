@@ -683,7 +683,7 @@
       const position = capturedFighterPosition(captureAnimation);
       const t = clamp(captureAnimation.age / captureAnimation.duration, 0, 1);
       const spin = Math.PI * 4 * (1 - Math.pow(1 - t, 1.5));
-      drawCraft("player", position.x, position.y, spin, weapon);
+      drawCraft("player", position.x, position.y, spin, weapon, false, true);
     }
   }
 
@@ -1235,6 +1235,12 @@
   }
   function drawItems() {
     for (const item of items) {
+      if (item.type === "rescue") {
+        const spin = (item.age || 0) * Math.PI * 4;
+        const docking = clamp(distance(item.x, item.y, ship.x, ship.y) / 100, 0, 1);
+        drawCraft("player", item.x, item.y, spin * docking, item.weapon || weapon);
+        continue;
+      }
       ctx.save(); ctx.translate(item.x, item.y);
       ctx.rotate(Math.sin(elapsed * 5) * .08);
       ctx.fillStyle = ["life", "rescue"].includes(item.type) ? "#213c60" : item.type === "weapon" ? "#9f7730" : "#745820";
@@ -1510,8 +1516,8 @@
           ? capturedFighterPosition(captureAnimation) : { x: enemy.x, y: enemy.y + 32 };
         if (captureAnimation && captureAnimation.enemy === enemy) captureAnimation = null;
         enemy.carrying = false; captivePending = false;
-        items.push({ x: rescuedPosition.x, y: rescuedPosition.y, vy: 95, type: "rescue" });
-        banner = "기체 구출! 내려오는 기체를 받아주세요"; bannerTime = 2;
+        items.push({ x: rescuedPosition.x, y: rescuedPosition.y, age: 0, weapon, type: "rescue" });
+        banner = "기체 구출 · 자동 귀환 중!"; bannerTime = 2;
       }
       if (enemy.carrier) {
         items.push({ x: enemy.x, y: enemy.y + 8, vy: 75, type: enemy.carrier });
@@ -1750,7 +1756,13 @@
 
     if (state !== "playing") return;
     for (const item of items) {
-      item.y += item.vy * dt;
+      if (item.type === "rescue") {
+        item.age = (item.age || 0) + dt;
+        const dx = ship.x - item.x, dy = ship.y - item.y;
+        const remaining = Math.hypot(dx, dy);
+        const step = Math.min(remaining, (160 + 160 * Math.min(1, item.age)) * dt);
+        if (remaining > 0) { item.x += dx / remaining * step; item.y += dy / remaining * step; }
+      } else item.y += item.vy * dt;
       if (respawnDelay <= 0 && distance(item.x, item.y, ship.x, ship.y) < 25) {
         item.caught = true;
         if (item.type === "rescue") {
@@ -1768,11 +1780,7 @@
         else { score += 500; banner = "보너스 점수 +500"; bannerTime = 1.7; tone(760, .12, "sine", .05); }
       }
     }
-    for (const item of items) if (!item.caught && item.type === "rescue" && item.y >= H + 12) {
-      captivePending = false;
-      banner = "구출 실패 · 기체를 잃었습니다"; bannerTime = 2;
-    }
-    items = items.filter(item => !item.caught && item.y < H + 12);
+    items = items.filter(item => !item.caught && (item.type === "rescue" || item.y < H + 12));
 
     if (state !== "playing") return;
     const remaining = enemies.some(e => e.alive);
