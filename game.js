@@ -821,7 +821,7 @@
       : stage <= 60 ? { chance: .02, interval: 20 } : { chance: .025, interval: 15 };
   }
   function trySpecialDrop(enemy) {
-    if (enemy.escort || specialAmmo.length >= 2 || specialDropTimer > 0 ||
+    if (enemy.escort || specialAmmo.length >= 3 || specialDropTimer > 0 ||
       items.some(i => !i.caught && ["emp", "flash", "shield"].includes(i.type))) return;
     const rule = specialDropRules();
     if (Math.random() >= rule.chance) return;
@@ -1915,8 +1915,8 @@
           sweepVoice(330, 990, .4, "triangle", .06);
         } else if (item.type === "weapon") upgradeWeapon(item.level);
         else if (["emp", "flash", "shield"].includes(item.type)) {
-          if(specialAmmo.length<2) { specialAmmo.push(item.type);banner=(item.type==="emp"?"EMP탄":item.type==="shield"?"자기장 장막":"섬광탄")+" 획득 · 해당 버튼으로 발사"; }
-          else banner="특수 무기 가득 참 · 최대 2회";
+          if(specialAmmo.length<3) { specialAmmo.push(item.type);banner=(item.type==="emp"?"EMP탄":item.type==="shield"?"자기장 장막":"섬광탄")+" 획득 · 해당 버튼으로 발사"; }
+          else banner="특수 무기 가득 참 · 최대 3개";
           bannerTime=2;
         }
         else if (item.type === "life") { lives += 1; banner = "보너스 기체 · 생명 +1"; bannerTime = 2; tone(1040, .16, "sine", .06); }

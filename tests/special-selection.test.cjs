@@ -12,4 +12,12 @@ g.ammo(['emp','flash']);tap(flash);assert.equal(g.get().specialShots[0].type,'fl
 g.beginGame();g.ammo(['emp','emp']);tap(flash);assert.equal(g.get().specialAmmo.length,2,'empty flash does not consume EMP');assert.equal(g.get().specialCooldown,0);tap(emp);assert.equal(g.get().specialAmmo.length,1);g.get().ship.invulnerable=999;g.update(.6);tap(emp);assert.equal(g.get().specialAmmo.length,0);
 g.beginGame();g.ammo(['flash','emp']);tap(g.get().joy,10);tap(g.get().fireButton,11);tap(emp,12);assert.equal(g.get().joy.pointer,10);assert.equal(g.get().fireButton.pointer,11);assert(g.get().fireButton.pressed);assert.equal(g.get().specialShots.at(-1).type,'emp','three concurrent controls');g.pointerUp({pointerId:12,preventDefault(){}});assert.equal(g.get().joy.pointer,10);assert.equal(g.get().fireButton.pointer,11);
 const ctx=canvas.getContext('2d');ctx.fillStyle='#07101a';ctx.fillRect(0,0,360,780);g.ammo(['flash','emp']);g.drawSpecialButton();fs.writeFileSync('/tmp/v30-special-buttons.png',canvas.toBuffer('image/png'));
-console.log('PASS: independent selection, same-type two uses, absent type no-op, shared cooldown, separated touch regions and simultaneous movement/fire/special');
+for(const inventory of [['emp','flash'],['shield','shield']]) {
+ g.beginGame();g.ammo(inventory.slice());g.get().ship.invulnerable=999;
+ const collect=type=>{const ship=g.get().ship;g.get().items.push({type,x:ship.x,y:ship.y,vy:0});g.update(.001);};
+ collect('shield');assert.equal(g.get().specialAmmo.length,3,'third item is accepted, including three of one type');
+ collect('emp');assert.equal(g.get().specialAmmo.length,3,'fourth item cannot exceed capacity');
+ g.fireSpecial(inventory[0]);assert.equal(g.get().specialAmmo.length,2);
+ collect('flash');assert.equal(g.get().specialAmmo.length,3,'used slot can be refilled');
+}
+console.log('PASS: independent selection, same-type uses, capacity three with refill and fourth-item rejection, absent type no-op, shared cooldown, separated touch regions and simultaneous movement/fire/special');
