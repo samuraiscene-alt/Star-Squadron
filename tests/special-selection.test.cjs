@@ -6,8 +6,8 @@ let source=fs.readFileSync(require('path').join(__dirname,'../game.js'),'utf8').
 vm.runInNewContext(source,sandbox);const g=sandbox.g;
 const tap=(button,id=5)=>g.pointerDown({clientX:button.x,clientY:button.y,pointerId:id,preventDefault(){}});
 g.beginGame();let s=g.get();const flash=s.specialButtons.find(b=>b.type==='flash'),emp=s.specialButtons.find(b=>b.type==='emp');
-for(const b of s.specialButtons){assert(b.y+32<=s.H);for(const control of [s.joy,s.fireButton])assert(Math.hypot(b.x-control.x,b.y-control.y)>32+48,'nonoverlapping touch regions');}
-assert(Math.abs(emp.x-flash.x)>64,'gap between separate touch regions');
+for(const b of s.specialButtons){assert(b.y+26<=s.H);for(const control of [s.joy,s.fireButton])assert(Math.hypot(b.x-control.x,b.y-control.y)>26+48,'nonoverlapping touch regions');}
+assert(Math.abs(emp.x-flash.x)>52,'gap between separate touch regions');
 g.ammo(['emp','flash']);tap(flash);assert.equal(g.get().specialShots[0].type,'flash','choose second acquired weapon directly');assert.equal(g.get().specialAmmo.join(','),'emp');tap(emp);assert.equal(g.get().specialAmmo.length,1,'shared .5 cooldown');g.get().ship.invulnerable=999;g.update(.6);tap(emp);assert.equal(g.get().specialShots.at(-1).type,'emp');assert.equal(g.get().specialAmmo.length,0);
 g.beginGame();g.ammo(['emp','emp']);tap(flash);assert.equal(g.get().specialAmmo.length,2,'empty flash does not consume EMP');assert.equal(g.get().specialCooldown,0);tap(emp);assert.equal(g.get().specialAmmo.length,1);g.get().ship.invulnerable=999;g.update(.6);tap(emp);assert.equal(g.get().specialAmmo.length,0);
 g.beginGame();g.ammo(['flash','emp']);tap(g.get().joy,10);tap(g.get().fireButton,11);tap(emp,12);assert.equal(g.get().joy.pointer,10);assert.equal(g.get().fireButton.pointer,11);assert(g.get().fireButton.pressed);assert.equal(g.get().specialShots.at(-1).type,'emp','three concurrent controls');g.pointerUp({pointerId:12,preventDefault(){}});assert.equal(g.get().joy.pointer,10);assert.equal(g.get().fireButton.pointer,11);

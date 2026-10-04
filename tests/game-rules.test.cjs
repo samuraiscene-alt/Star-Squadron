@@ -12,10 +12,10 @@ for(let n=1;n<=100;n++){
  for(let i=0;i<180;i++)g.update(1/60);
  for(const e of s.enemies)g.damageEnemy(e,999);
  if(s.boss){g.damageBoss(999);assert(g.get().bursts.some(b=>b.kind===bossMap[n]));}
- s=g.get();const weaponItem=s.items.find(x=>x.type==='weapon');assert.equal(weaponItem?.level,({10:2,20:3,30:4,40:5,60:6})[n]);
+ s=g.get();const weaponItem=s.items.find(x=>x.type==='weapon');assert.equal(weaponItem?.level,({10:2,20:3,30:4,40:5,60:6,70:7,80:8})[n]);
  g.update(.01);assert.equal(g.get().stage,n,'must wait on pickup/explosion');
  for(const item of [...g.get().items]){let current=g.get();current.ship.x=item.x;item.y=current.ship.y;g.update(.001);}
- assert.equal(g.get().weapon,n<10?1:n<20?2:n<30?3:n<40?4:n<60?5:6);
+ assert.equal(g.get().weapon,n<10?1:n<20?2:n<30?3:n<40?4:n<60?5:n<70?6:n<80?7:8);
  if(native){g.render(0);canvas.toBuffer('image/png');}
  for(let i=0;i<300&&g.get().stage===n&&g.get().state==='playing';i++)g.update(1/60);
  if(n===100){assert.equal(g.get().state,'victory');assert.equal(g.get().stage,100);}else assert.equal(g.get().stage,n+1);
@@ -62,4 +62,4 @@ if(native){
 }
 console.log('PASS: entry fire from one selected craft; warning/dodge/capture/rescue; dual fire and two hits; pause; escape across boss stage; automatic rescue recovery; last-life capture termination/restart');
 if(native){g.beginGame();g.setStage(100);g.render(0);fs.writeFileSync('/tmp/squadron-boss-v11.png',canvas.toBuffer('image/png'));g.damageBoss(999);g.update(.3);g.render(0);fs.writeFileSync('/tmp/squadron-explosion-v11.png',canvas.toBuffer('image/png'));}
-console.log('PASS: 100-stage progression, boss priority, five weapon pickups, bonus lives, victory, explosions, pause/gameover, advanced flight/missiles'+(native?', native Canvas renders':''));
+console.log('PASS: 100-stage progression, boss priority, seven weapon pickups, bonus lives, victory, explosions, pause/gameover, advanced flight/missiles'+(native?', native Canvas renders':''));

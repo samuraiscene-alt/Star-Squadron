@@ -5,7 +5,7 @@
   const ctx = canvas.getContext("2d", { alpha: false });
   const W = 360;
   const FINAL_STAGE = 100;
-  const WEAPON_EVENTS = { 10: 2, 20: 3, 30: 4, 40: 5, 60: 6 };
+  const WEAPON_EVENTS = { 10: 2, 20: 3, 30: 4, 40: 5, 60: 6, 70: 7, 80: 8 };
   const cinema = window.SquadronCinema;
   const keys = new Set();
   const useTouchInput = "ontouchstart" in window;
@@ -57,7 +57,9 @@
   let specialFields = [];
   let specialCooldown = 0;
   let specialDropTimer = 0;
-  const specialButtons = [{ type: "flash", x: W / 2 - 42, y: 0 }, { type: "emp", x: W / 2 + 42, y: 0 }];
+  let shieldTime = 0;
+  let shieldBossCooldown = 0;
+  const specialButtons = [{ type: "flash", x: W / 2 - 56, y: 0 }, { type: "shield", x: W / 2, y: 0 }, { type: "emp", x: W / 2 + 56, y: 0 }];
   let respawnDelay = 0;
   let dualFighter = false;
   let captivePending = false;
@@ -116,7 +118,7 @@
     joy.y = H - 75;
     fireButton.x = W - 65;
     fireButton.y = H - 75;
-    specialButtons.forEach(button => { button.y = H - 34; });
+    specialButtons.forEach(button => { button.y = H - 27; });
     stars = Array.from({ length: 64 }, () => ({
       x: rand(4, W - 4), y: rand(0, H), size: Math.random() < 0.8 ? 1.5 : 2.2,
       color: ["#758599", "#5875a3", "#8b7770"][Math.floor(Math.random() * 3)],
@@ -430,7 +432,7 @@
   }
   function beginGame() {
     specialAmmo = []; specialShots = []; specialFields = []; specialCooldown = 0;
-    specialDropTimer = 0;
+    specialDropTimer = 0; shieldTime = 0; shieldBossCooldown = 0;
     if (cinema) cinema.hide();
     resetControls();
     stopSounds();
@@ -598,7 +600,7 @@
   }
 
   function captureFighter(enemy) {
-    if (state !== "playing" || dualFighter || captivePending || ship.invulnerable > 0 || lives <= 0 || respawnDelay > 0) return;
+    if (state !== "playing" || dualFighter || captivePending || ship.invulnerable > 0 || lives <= 0 || respawnDelay > 0 || shieldTime > 0) return;
     captureAnimation = { x: ship.x, y: ship.y, enemy, age: 0, duration: 1.1 };
     captivePending = true; enemy.carrying = true;
     const previousLives = lives;
@@ -796,6 +798,11 @@
     const index = specialAmmo.indexOf(type);
     if (index < 0) return;
     specialAmmo.splice(index, 1); specialCooldown = .5;
+    if (type === "shield") {
+      shieldTime = 3; shieldBossCooldown = 0;
+      sweepVoice(180, 900, .3, "sine", .06);
+      return;
+    }
     specialShots.push({ x: ship.x, y: ship.y - 20, targetY: Math.max(150, ship.y - 230), type });
     sweepVoice(280, 740, .2, "sine", .05);
   }
@@ -815,16 +822,21 @@
   }
   function trySpecialDrop(enemy) {
     if (enemy.escort || specialAmmo.length >= 2 || specialDropTimer > 0 ||
-      items.some(i => !i.caught && (i.type === "emp" || i.type === "flash"))) return;
+      items.some(i => !i.caught && ["emp", "flash", "shield"].includes(i.type))) return;
     const rule = specialDropRules();
     if (Math.random() >= rule.chance) return;
-    items.push({ x: enemy.x, y: enemy.y, vy: 80, type: Math.random() < .5 ? "emp" : "flash" });
+    const roll = Math.random();
+    const type = stage > 40 ? (roll < .2 ? "shield" : roll < .6 ? "emp" : "flash") : (roll < .5 ? "emp" : "flash");
+    items.push({ x: enemy.x, y: enemy.y, vy: 80, type });
     specialDropTimer = rule.interval;
   }
   function drawSpecialIcon(type, x, y, size = 8) {
     ctx.save();ctx.translate(x,y);ctx.scale(size/8,size/8);
-    ctx.fillStyle=ctx.strokeStyle=type==="emp"?"#86dcff":"#ffe39a";ctx.lineWidth=1.4;
-    if(type==="emp") {
+    ctx.fillStyle=ctx.strokeStyle=type==="emp"?"#86dcff":type==="shield"?"#ab9bff":"#ffe39a";ctx.lineWidth=1.4;
+    if(type==="shield") {
+      ctx.beginPath();ctx.arc(0,0,7,0,Math.PI*2);ctx.stroke();
+      ctx.beginPath();ctx.ellipse(0,0,9,3,-.5,0,Math.PI*2);ctx.stroke();
+    } else if(type==="emp") {
       ctx.beginPath();ctx.moveTo(2,-8);ctx.lineTo(-5,1);ctx.lineTo(-1,1);ctx.lineTo(-3,8);ctx.lineTo(5,-2);ctx.lineTo(1,-2);ctx.closePath();ctx.fill();
     } else {
       ctx.beginPath();ctx.arc(0,0,3,0,Math.PI*2);ctx.fill();
@@ -834,6 +846,8 @@
   }
   function updateSpecials(dt) {
     specialCooldown = Math.max(0, specialCooldown - dt);
+    shieldTime = Math.max(0, shieldTime - dt);
+    shieldBossCooldown = Math.max(0, shieldBossCooldown - dt);
     for (const shot of specialShots) {
       shot.y -= 230 * dt;
       if (shot.y <= shot.targetY || enemies.some(e => e.alive && distance(e.x, e.y, shot.x, shot.y) < 22) ||
@@ -852,6 +866,34 @@
       }
     }
     specialFields = specialFields.filter(f => f.age < f.duration);
+  }
+  function shieldRadius() { return dualFighter ? 48 : 32; }
+  function updateShieldContacts() {
+    if (shieldTime <= 0) return;
+    const radius = shieldRadius();
+    for (const shot of enemyShots) {
+      if (distance(shot.x, shot.y, ship.x, ship.y) <= radius + (shot.r || 3)) shot.dead = true;
+    }
+    enemyShots = enemyShots.filter(shot => !shot.dead);
+    for (const enemy of enemies) {
+      if (enemy.alive && distance(enemy.x, enemy.y, ship.x, ship.y) <= radius + 10) damageEnemy(enemy, 999);
+    }
+    if (boss && shieldBossCooldown <= 0 && distance(boss.x, boss.y, ship.x, ship.y) <= radius + boss.hitRadius) {
+      damageBoss(3); shieldBossCooldown = .5;
+    }
+  }
+  function drawShield() {
+    if (shieldTime <= 0 || lives <= 0) return;
+    const radius = shieldRadius(), phase = elapsed * 5;
+    ctx.save();ctx.translate(ship.x, ship.y);ctx.globalCompositeOperation = "lighter";
+    const glow = ctx.createRadialGradient(0,0,0,0,0,radius);
+    glow.addColorStop(0,"rgba(139,115,255,.03)");glow.addColorStop(.7,"rgba(111,192,255,.08)");glow.addColorStop(1,"rgba(164,144,255,.3)");
+    ctx.fillStyle=glow;ctx.beginPath();ctx.arc(0,0,radius,0,Math.PI*2);ctx.fill();
+    ctx.globalAlpha=Math.min(1,shieldTime/.3);ctx.strokeStyle="#bbaaff";ctx.lineWidth=1.7;
+    ctx.beginPath();ctx.arc(0,0,radius,0,Math.PI*2);ctx.stroke();
+    ctx.strokeStyle="#89ecff";
+    for(let i=0;i<3;i++) {ctx.beginPath();ctx.ellipse(0,0,radius+3,radius*.35,phase+i*Math.PI/3,0,Math.PI*2);ctx.stroke();}
+    ctx.restore();
   }
   function drawStatus(e) {
     if (!(e.stun > 0 || e.blind > 0)) return;
@@ -1297,12 +1339,12 @@
       }
       ctx.save(); ctx.translate(item.x, item.y);
       ctx.rotate(Math.sin(elapsed * 5) * .08);
-      ctx.fillStyle = item.type === "emp" ? "#173c55" : item.type === "flash" ? "#574518" : ["life", "rescue"].includes(item.type) ? "#213c60" : item.type === "weapon" ? "#9f7730" : "#745820";
-      ctx.strokeStyle = item.type === "emp" ? "#86dcff" : ["life", "rescue"].includes(item.type) ? "#8ce7ff" : "#fce199";
+      ctx.fillStyle = item.type === "shield" ? "#302348" : item.type === "emp" ? "#173c55" : item.type === "flash" ? "#574518" : ["life", "rescue"].includes(item.type) ? "#213c60" : item.type === "weapon" ? "#9f7730" : "#745820";
+      ctx.strokeStyle = item.type === "shield" ? "#ab9bff" : item.type === "emp" ? "#86dcff" : ["life", "rescue"].includes(item.type) ? "#8ce7ff" : "#fce199";
       ctx.lineWidth = 1;
       ctx.fillRect(-11, -11, 22, 22); ctx.strokeRect(-11, -11, 22, 22);
       if (["life", "rescue"].includes(item.type)) drawCraft("player", 0, 0, 0, 1, true);
-      else if (item.type === "emp" || item.type === "flash") drawSpecialIcon(item.type,0,0);
+      else if (["emp", "flash", "shield"].includes(item.type)) drawSpecialIcon(item.type,0,0);
       else {
         ctx.fillStyle = "#fff1ae"; ctx.font = "bold 10px ui-monospace, monospace";
         ctx.textAlign = "center"; ctx.textBaseline = "middle";
@@ -1358,18 +1400,18 @@
   function drawSpecialButton() {
     for (const button of specialButtons) {
       const count = specialAmmo.filter(type => type === button.type).length;
-      const color = button.type === "emp" ? "#86dcff" : "#ffe39a";
+      const color = button.type === "emp" ? "#86dcff" : button.type === "shield" ? "#ab9bff" : "#ffe39a";
       ctx.save(); ctx.translate(button.x, button.y);
       ctx.fillStyle = "#0a1523"; ctx.strokeStyle = count ? color : "#465667"; ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.arc(0, 0, 28, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+      ctx.beginPath(); ctx.arc(0, 0, 23, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
       ctx.globalAlpha = count ? (specialCooldown > 0 ? .55 : 1) : .3;
-      drawSpecialIcon(button.type, 0, -6, 9);
+      drawSpecialIcon(button.type, 0, -6, 8);
       ctx.fillStyle = color; ctx.textAlign = "center"; ctx.textBaseline = "middle";
       ctx.font = "bold 9px sans-serif";
-      ctx.fillText(button.type === "emp" ? "EMP" : "섬광탄", 0, 10);
+      ctx.fillText(button.type === "emp" ? "EMP" : button.type === "shield" ? "장막" : "섬광탄", 0, 10);
       ctx.globalAlpha = 1;
       ctx.fillStyle = count ? color : "#627080";
-      ctx.font = "bold 10px sans-serif"; ctx.fillText(String(count), 18, -17);
+      ctx.font = "bold 10px sans-serif"; ctx.fillText(String(count), 15, -14);
       ctx.restore();
     }
   }
@@ -1419,7 +1461,7 @@
     enemies = []; boss = null;
     playerShots = []; enemyShots = []; items = []; particles = []; bursts = [];
     dualFighter = false; captivePending = false; captureAnimation = null;
-    lives = 0; screenShake = 0;
+    lives = 0; shieldTime = 0; shieldBossCooldown = 0; screenShake = 0;
   }
   function returnHome() {
     resetControls(); stopSounds();
@@ -1436,6 +1478,7 @@
     lives = 3;
     dualFighter = false;
     captureAnimation = null;
+    shieldTime = 0; shieldBossCooldown = 0;
     respawnDelay = 0;
     ship.x = W / 2;
     ship.invulnerable = 2.2;
@@ -1635,7 +1678,7 @@
         .filter(e => e.y < y - 20 && e.y > 30 && e.x >= 0 && e.x <= W && Math.abs(e.x - x) <= 110 && distance(e.x, e.y, x, y) <= 300) : [];
       const target = candidates.sort((a, b) => distance(a.x, a.y, x, y) - distance(b.x, b.y, x, y))[0] || null;
       playerShots.push({ x, y, vx: 0, vy: -speed, speed, type: "plasma", r: 7, ttl: 3,
-        guided, target, age: 0, guidanceEnded: !target });
+        guided, target, age: 0, turnRate: weapon >= 8 ? .54 : .45, trackingTime: weapon >= 8 ? 1.1 : .9, guidanceEnded: !target });
     }
   }
   function updatePlasmaGuidance(shot, dt) {
@@ -1643,7 +1686,7 @@
     if (!shot.guided || shot.guidanceEnded || shot.exploded) return;
     const target = shot.target;
     const alive = target && (target === boss || (target.alive && enemies.includes(target)));
-    if (!alive || shot.y <= target.y || shot.age > .9) {
+    if (!alive || shot.y <= target.y || shot.age > (shot.trackingTime || .9)) {
       shot.guidanceEnded = true;
       shot.target = null;
       return;
@@ -1651,14 +1694,14 @@
     // One forward target, limited steering: fast enemies can evade the shot.
     const angle = Math.atan2(shot.vx, -shot.vy);
     const desired = clamp(Math.atan2(target.x - shot.x, shot.y - target.y), -.35, .35);
-    const next = angle + clamp(desired - angle, -.45 * dt, .45 * dt);
+    const next = angle + clamp(desired - angle, -(shot.turnRate || .45) * dt, (shot.turnRate || .45) * dt);
     shot.vx = Math.sin(next) * shot.speed;
     shot.vy = -Math.cos(next) * shot.speed;
   }
   function upgradeWeapon(level) {
     if (level <= weapon) return;
     weapon = level;
-    const labels = ["", "기본탄", "쌍발탄", "기관포", "레이저", "플라즈마", "유도 플라즈마"];
+    const labels = ["", "기본탄", "쌍발탄", "기관포", "레이저", "플라즈마", "유도 플라즈마", "유도 플라즈마 · 연사 강화", "유도 플라즈마 · 정밀 유도"];
     banner = `무기 업그레이드 · ${labels[weapon]}`;
     bannerTime = 1.7;
     score += 300;
@@ -1666,7 +1709,7 @@
     window.setTimeout(() => tone(880, .11, "square", .04), 70);
   }
   function loseLife(impactX = ship.x) {
-    if (ship.invulnerable > 0 || state !== "playing") return;
+    if (shieldTime > 0 || ship.invulnerable > 0 || state !== "playing") return;
     if (dualFighter) {
       cinematicExplosion(ship.x + (impactX < ship.x ? -16 : 16), ship.y, "player");
       dualFighter = false; ship.invulnerable = 1.5;
@@ -1729,7 +1772,7 @@
     const keyboardFire = keys.has(" ") || keys.has("Spacebar");
     if (respawnDelay <= 0 && (fireButton.pressed || keyboardFire) && fireCooldown <= 0) {
       shootPlayer();
-      fireCooldown = weapon === 3 ? .18 : weapon === 4 ? .30 : weapon >= 5 ? .45 : .38;
+      fireCooldown = weapon === 3 ? .18 : weapon === 4 ? .30 : weapon >= 7 ? .38 : weapon >= 5 ? .45 : .38;
     }
 
     if (!bossStage) {
@@ -1816,6 +1859,7 @@
       if (shot.type === "plasma") shot.ttl -= dt;
     }
     for (const shot of enemyShots) updateEnemyShot(shot, dt);
+    updateShieldContacts();
 
     for (const shot of playerShots) {
       if (shot.type === "laser") {
@@ -1870,8 +1914,8 @@
           banner = "구출 성공 · 듀얼 파이터!"; bannerTime = 2;
           sweepVoice(330, 990, .4, "triangle", .06);
         } else if (item.type === "weapon") upgradeWeapon(item.level);
-        else if (item.type === "emp" || item.type === "flash") {
-          if(specialAmmo.length<2) { specialAmmo.push(item.type);banner=(item.type==="emp"?"EMP탄":"섬광탄")+" 획득 · 중앙 버튼으로 발사"; }
+        else if (["emp", "flash", "shield"].includes(item.type)) {
+          if(specialAmmo.length<2) { specialAmmo.push(item.type);banner=(item.type==="emp"?"EMP탄":item.type==="shield"?"자기장 장막":"섬광탄")+" 획득 · 해당 버튼으로 발사"; }
           else banner="특수 무기 가득 참 · 최대 2회";
           bannerTime=2;
         }
@@ -1911,6 +1955,7 @@
     drawParticles();
     drawBursts();
     drawShip();
+    drawShield();
     drawControls();
     drawSpecialButton();
     if (state === "title" && !cinema) drawOverlay("STAR SQUADRON");
@@ -1978,7 +2023,7 @@
     if (state === "victory") beginGame();
     if (state !== "playing") return;
     initAudio();
-    const special = specialButtons.find(button => distance(p.x, p.y, button.x, button.y) < 32);
+    const special = specialButtons.find(button => distance(p.x, p.y, button.x, button.y) < 26);
     if (special) { fireSpecial(special.type); return; }
     if (distance(p.x, p.y, joy.x, joy.y) < 48 && joy.pointer === null) {
       joy.pointer = event.pointerId;
