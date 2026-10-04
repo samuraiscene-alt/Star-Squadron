@@ -1512,12 +1512,18 @@
       enemyExplosion(enemy);
       if (amount < 999 && !enemy.escort && Math.random() < .03) items.push({ x: enemy.x, y: enemy.y, vy: 80, type: Math.random() < .5 ? "emp" : "flash" });
       if (enemy.carrying) {
-        const rescuedPosition = captureAnimation && captureAnimation.enemy === enemy
-          ? capturedFighterPosition(captureAnimation) : { x: enemy.x, y: enemy.y + 32 };
-        if (captureAnimation && captureAnimation.enemy === enemy) captureAnimation = null;
+        const interrupted = captureAnimation && captureAnimation.enemy === enemy;
         enemy.carrying = false; captivePending = false;
-        items.push({ x: rescuedPosition.x, y: rescuedPosition.y, age: 0, weapon, type: "rescue" });
-        banner = "기체 구출 · 자동 귀환 중!"; bannerTime = 2;
+        if (interrupted) {
+          ship.x = captureAnimation.x;
+          captureAnimation = null; lives += 1; respawnDelay = 0;
+          ship.invulnerable = 1.5; dualFighter = false;
+          banner = "납치 중단 · 단독 기체 복귀";
+        } else {
+          items.push({ x: enemy.x, y: enemy.y + 32, age: 0, weapon, type: "rescue" });
+          banner = "기체 구출 · 자동 귀환 중!";
+        }
+        bannerTime = 2;
       }
       if (enemy.carrier) {
         items.push({ x: enemy.x, y: enemy.y + 8, vy: 75, type: enemy.carrier });
