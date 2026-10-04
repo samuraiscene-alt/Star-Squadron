@@ -11,7 +11,7 @@ for(let n=1;n<=100;n++){
  let s=g.get();assert.equal(s.stage,n);assert.equal(s.boss?.kind,bossMap[n]);s.ship.invulnerable=999;
  for(let i=0;i<180;i++)g.update(1/60);
  for(const e of s.enemies)g.damageEnemy(e,999);
- if(s.boss){g.damageBoss(999);assert.equal(g.get().bursts[0].kind,bossMap[n]);}
+ if(s.boss){g.damageBoss(999);assert(g.get().bursts.some(b=>b.kind===bossMap[n]));}
  s=g.get();const weaponItem=s.items.find(x=>x.type==='weapon');assert.equal(weaponItem?.level,({10:2,20:3,30:4,40:5})[n]);
  g.update(.01);assert.equal(g.get().stage,n,'must wait on pickup/explosion');
  for(const item of [...g.get().items]){let current=g.get();current.ship.x=item.x;item.y=current.ship.y;g.update(.001);}

@@ -52,6 +52,11 @@
   let items = [];
   let particles = [];
   let bursts = [];
+  let specialAmmo = [];
+  let specialShots = [];
+  let specialFields = [];
+  let specialCooldown = 0;
+  const specialButton = { x: W / 2, y: 0 };
   let respawnDelay = 0;
   let dualFighter = false;
   let captivePending = false;
@@ -110,6 +115,7 @@
     joy.y = H - 75;
     fireButton.x = W - 65;
     fireButton.y = H - 75;
+    specialButton.y = H - 32;
     stars = Array.from({ length: 64 }, () => ({
       x: rand(4, W - 4), y: rand(0, H), size: Math.random() < 0.8 ? 1.5 : 2.2,
       color: ["#758599", "#5875a3", "#8b7770"][Math.floor(Math.random() * 3)],
@@ -343,6 +349,7 @@
     return 3 + (round >= 25 ? 1 : 0) + (round >= 45 ? 1 : 0) + (round >= 65 ? 1 : 0) + (round >= 85 ? 1 : 0);
   }
   function startStage() {
+    specialShots = []; specialFields = [];
     enemies = [];
     playerShots = [];
     enemyShots = [];
@@ -413,13 +420,15 @@
       const hp = Math.round([0, 28, 66, 108, 190][rank.tier] + stage * .6);
       boss = {
         ...rank, x: W / 2, y: 120, hp, maxHp: hp, hitRadius: 27 + rank.tier * 4,
-        dir: 1, shotTimer: 1.6, flash: 0, age: 0, volley: 0
+        dir: 1, shotTimer: 1.6, flash: 0, age: 0, volley: 0,
+        growth: Math.floor((stage - 1) / 20), escortTimer: 2.5, pending: []
       };
       banner = `${stage}판 · ${rank.name}`;
       bannerTime = 2;
     }
   }
   function beginGame() {
+    specialAmmo = []; specialShots = []; specialFields = []; specialCooldown = 0;
     if (cinema) cinema.hide();
     resetControls();
     stopSounds();
@@ -596,6 +605,9 @@
     sweepVoice(780, 150, .65, "sine", .075, 0, 25);
   }
   function updateCaptor(enemy, dt) {
+    if (enemy.blind > 0 && enemy.beam && enemy.beam.phase !== "return" && !enemy.carrying) {
+      enemy.beam = { phase: "return", age: 0, fromX: enemy.x, fromY: enemy.y }; enemy.beamCooldown = 3;
+    }
     if (enemy.escape) {
       enemy.escape.age += dt; enemy.y -= 360 * dt; enemy.x += Math.sin(enemy.escape.age * 8) * 80 * dt;
       if (enemy.y < -55) { enemy.alive = false; captivePending = true; }
@@ -632,7 +644,7 @@
     }
     if (enemy.entry || enemy.dive || enemy.carrying || dualFighter || captivePending || lives <= 1) return false;
     enemy.beamCooldown -= dt;
-    if (enemy.beamCooldown <= 0 && !enemies.some(e => e.alive && (e.entry || e.beam || (stage < 30 && e.dive)))) {
+    if (!(enemy.blind > 0) && enemy.beamCooldown <= 0 && !enemies.some(e => e.alive && (e.entry || e.beam || (stage < 30 && e.dive)))) {
       enemy.beam = { phase: "approach", age: 0, fromX: enemy.x, fromY: enemy.y,
         x: clamp(ship.x, 55, W - 55), y: Math.max(230, ship.y - 180) };
       banner = "납치 빔 접근 · 좌우로 피하거나 특수기를 격추!"; bannerTime = 2;
@@ -701,10 +713,10 @@
   function enemyFire(enemy) {
     missileSound();
     const speed = combatDifficulty().missileSpeed;
-    const baseAngle = Math.atan2(ship.y - enemy.y, ship.x - enemy.x);
+    const baseAngle = enemy.blind > 0 ? Math.PI / 2 : Math.atan2(ship.y - enemy.y, ship.x - enemy.x);
     const heavy = ["assault", "armored", "elite", "heavy", "shield"].includes(enemy.kind);
     // A narrow twin volley widens the attack without filling the screen.
-    const guided = stage >= 31 && enemy.y < ship.y - 100 &&
+    const guided = !(enemy.blind > 0) && stage >= 31 && enemy.y < ship.y - 100 &&
       (["phantom", "elite"].includes(enemy.kind) || enemy.kind === "armored" && enemy.col % 4 === 1);
     const twin = stage >= 11 && (heavy || enemy.kind === "leader");
     const type = guided ? "homing" : twin ? "spread" : "straight";
@@ -716,18 +728,101 @@
   function bossFire() {
     if (!boss) return;
     missileSound();
-    const speed = 105 + stage * .8;
-    const tier = boss.tier;
+    const speed = Math.min(185, 100 + stage * .75);
+    const tier = boss.tier, growth = boss.growth || 0;
     boss.volley += 1;
-    const aim = Math.atan2(ship.y - boss.y, ship.x - boss.x);
-    const centered = boss.volley % 2 === 0 ? aim : Math.PI / 2;
-    const offsets = stage >= 20 ? [-.08, .08] : [0];
-    offsets.forEach((offset, i) => pushEnemyShot(boss.x + (offsets.length === 2 ? (i ? 5 : -5) : 0), boss.y + 20,
-      centered + offset, speed, boss.color, offsets.length === 2 ? "spread" : "straight", 3));
-    // Guided boss missiles begin at stage 40 and share the no-U-turn behavior.
-    if (stage >= 40 && boss.volley % (tier >= 3 ? 3 : 4) === 0) {
-      pushEnemyShot(boss.x, boss.y + 20, aim, Math.min(135, speed * .72), "#9cfde2", "homing", 3);
+    const aim = boss.blind > 0 ? Math.PI / 2 : Math.atan2(ship.y - boss.y, ship.x - boss.x);
+    const phase = boss.hp / boss.maxHp < .45 ? 1 : 0;
+    const fire = (x, angles, type = "spread") => angles.forEach(angle => pushEnemyShot(x, boss.y + 24, angle, speed, boss.color, type, 3));
+    if (tier === 1) {
+      fire(boss.x, [aim - .08, aim + .08]);
+      (boss.pending ||= []).push({ delay: .4, count: 1 + Math.min(2, growth) });
+    } else if (tier === 2) {
+      const side = boss.volley % 2 ? -1 : 1;
+      for (const bank of [side, -side]) fire(boss.x + bank * 25, [aim - .08, aim + .08]);
+      if (growth >= 2) (boss.pending ||= []).push({ delay: .5, count: 1 });
+    } else if (tier === 3) {
+      fire(boss.x, [-2, -1, 0, 1, 2].map(i => aim + i * .10));
+    } else {
+      for (const side of [-1, 1]) fire(boss.x + side * 32, [-1, 0, 1].map(i => Math.PI / 2 - side * (phase ? .28 : .16) + i * .09));
+      if (phase) (boss.pending ||= []).push({ delay: .45, count: 2 });
     }
+    if (!(boss.blind > 0) && (tier >= 3 || growth >= 3) && boss.volley % 3 === 0)
+      pushEnemyShot(boss.x, boss.y + 24, aim, Math.min(125, speed * .68), "#9cfde2", "homing", 3);
+  }
+
+  function spawnEscorts() {
+    if (!boss || boss.tier < 2) return;
+    const active = enemies.filter(e => e.alive && e.escort);
+    for (let slot = 0; slot < 2; slot++) {
+      if (active.some(e => e.slot === slot)) continue;
+      const e = makeEnemy(boss.tier >= 3 ? "armored" : "interceptor", slot, 0, boss.x, boss.y + 15);
+      e.escort = true; e.slot = slot; e.flightAge = 0; e.shotTimer = 2 + slot * .7;
+      e.hp = e.maxHp = boss.tier >= 3 ? 3 + Math.floor((boss.growth || 0) / 2) : 2;
+      enemies.push(e);
+    }
+  }
+  function updateEscort(e, dt) {
+    if (!boss) { e.alive = false; return; }
+    e.flightAge += dt; const side = e.slot ? 1 : -1;
+    const cycle = (e.flightAge + e.slot * 2) % 7;
+    const launch = clamp(e.flightAge / 1.1, 0, 1);
+    e.x = boss.x + side * (18 + launch * 25);
+    e.y = boss.y + 18 + launch * 55;
+    if (e.flightAge > 2 && cycle > 3) {
+      const t = (cycle - 3) / 4;
+      e.x += side * Math.sin(t * Math.PI * 2) * 65;
+      e.y += Math.sin(t * Math.PI) * Math.max(50, ship.y - boss.y - 140);
+    }
+    e.angle = Math.PI; e.shotTimer -= dt;
+    if (e.shotTimer <= 0) { enemyFire(e); e.shotTimer = Math.max(1.6, 3.5 - stage * .015); }
+    if (ship.invulnerable <= 0 && playerDistance(e.x, e.y) < 18) loseLife(e.x);
+  }
+
+  function fireSpecial() {
+    if (state !== "playing" || respawnDelay > 0 || specialCooldown > 0 || !specialAmmo.length) return;
+    const type = specialAmmo.shift(); specialCooldown = .5;
+    specialShots.push({ x: ship.x, y: ship.y - 20, targetY: Math.max(150, ship.y - 230), type });
+    sweepVoice(280, 740, .2, "sine", .05);
+  }
+  function specialBurst(shot) {
+    specialFields.push({ x: shot.x, y: shot.y, type: shot.type, radius: shot.type === "emp" ? 78 : 85,
+      age: 0, duration: shot.type === "emp" ? .65 : 3 });
+    sweepVoice(shot.type === "emp" ? 1200 : 650, 130, .35, "triangle", .06);
+  }
+  function updateSpecials(dt) {
+    specialCooldown = Math.max(0, specialCooldown - dt);
+    for (const shot of specialShots) {
+      shot.y -= 230 * dt;
+      if (shot.y <= shot.targetY || enemies.some(e => e.alive && distance(e.x, e.y, shot.x, shot.y) < 22) ||
+        boss && distance(boss.x, boss.y, shot.x, shot.y) < boss.hitRadius) { specialBurst(shot); shot.dead = true; }
+    }
+    specialShots = specialShots.filter(s => !s.dead);
+    for (const field of specialFields) {
+      const first = field.age === 0; field.age += dt;
+      if (field.type === "emp" && !first) continue;
+      for (const e of [...enemies, ...(boss ? [boss] : [])]) {
+        if (e.alive === false || distance(e.x, e.y, field.x, field.y) > field.radius) continue;
+        if (e === boss && field.bossApplied) continue;
+        if (field.type === "emp") e.stun = Math.max(e.stun || 0, e === boss ? .5 : 2);
+        else e.blind = Math.max(e.blind || 0, e === boss ? .5 : 2);
+        if (e === boss) field.bossApplied = true;
+      }
+    }
+    specialFields = specialFields.filter(f => f.age < f.duration);
+  }
+  function drawStatus(e) {
+    if (!(e.stun > 0 || e.blind > 0)) return;
+    ctx.save();ctx.translate(e.x,e.y);ctx.strokeStyle=e.stun>0?"#94dcff":"#ffe7a0";ctx.lineWidth=1.4;
+    for(let i=0;i<3;i++){const a=elapsed*7+i*2.1;const x=Math.cos(a)*22,y=Math.sin(a)*20;
+      ctx.beginPath();ctx.moveTo(x-4,y-4);ctx.lineTo(x+2,y);ctx.lineTo(x-2,y+3);ctx.lineTo(x+4,y+5);ctx.stroke();}
+    ctx.restore();
+  }
+  function drawSpecials() {
+    for(const s of specialShots){ctx.fillStyle=s.type==="emp"?"#84daff":"#ffe4a0";ctx.fillRect(s.x-3,s.y-9,6,14);}
+    for(const f of specialFields){ctx.save();ctx.globalAlpha=(1-f.age/f.duration)*.32;ctx.fillStyle=f.type==="emp"?"#66caff":"#ffedbd";
+      ctx.beginPath();ctx.arc(f.x,f.y,f.radius,0,Math.PI*2);ctx.fill();ctx.globalAlpha=(1-f.age/f.duration)*.8;ctx.strokeStyle=ctx.fillStyle;ctx.lineWidth=2;ctx.stroke();ctx.restore();}
+    enemies.filter(e=>e.alive).forEach(drawStatus);if(boss)drawStatus(boss);
   }
 
   function drawPixelMap(map, x, y, palette, cell, alpha = 1) {
@@ -805,7 +900,7 @@
     const key = kind + "-" + level;
     if (craftArtwork.has(key)) return craftArtwork.get(key);
     const art = document.createElement("canvas");
-    art.width = art.height = kind === "boss" ? 256 : 224;
+    art.width = art.height = kind === "boss" ? 400 : 224;
     const paint = art.getContext("2d");
     paint.translate(art.width / 2, art.height / 2);
     paint.scale(4, 4);
@@ -906,31 +1001,26 @@
       glass(0,-5,4,5);
       line([[-5,5],[5,5]],"#fff0ba",1.3);
     } else if (kind === "boss") {
-      for (const side of [-1, 1]) {
-        panel([[side * 6, -9], [side * 23, -14], [side * 29, -5], [side * 27, 13], [side * 15, 18], [side * 8, 9]], metal);
-        panel([[side * 13, -8], [side * 24, -9], [side * 23, 4], [side * 13, 7]], "#264658");
-        line([[side * 10, -7], [side * 25, -11], [side * 27, -4]], "#bbffed", .7);
-        vent(side < 0 ? -22 : 19, -4, 5);
-        panel([[side * 21 - 2, 2], [side * 21 + 2, 2], [side * 21 + 2, 20], [side * 21 - 2, 20]], "#497882");
-        paint.fillStyle = "#bafeee"; paint.fillRect(side * 21 - 1, 18, 2, 2);
-        glass(side * 12, 0, 2.2, 4);
+      // The silhouette is fixed by rank; additional hardware is drawn per growth.
+      if (level === 1) {
+        panel([[0,-25],[7,-6],[25,12],[17,20],[5,12],[0,20],[-5,12],[-17,20],[-25,12],[-7,-6]],metal);
+        panel([[-4,-16],[4,-16],[5,14],[-5,14]],hull);glass(0,-6,3,5);
+        for(const side of [-1,1]){line([[side*8,3],[side*19,13]],colors[1],1);vent(side<0?-19:16,10);}
+      } else if (level === 2) {
+        panel([[-30,-5],[30,-5],[30,7],[-30,7]],metal);
+        for(const side of [-1,1]){const x=side*23;panel([[x,-25],[x+7,-12],[x+7,17],[x,24],[x-7,17],[x-7,-12]],hull);glass(x,-8,3,6);vent(x-2,8,5);}
+        panel([[0,-15],[8,-3],[6,14],[-6,14],[-8,-3]],metal);glass(0,-3,3,4);
+      } else if (level === 3) {
+        panel([[-33,-19],[33,-19],[38,-5],[33,21],[13,28],[-13,28],[-33,21],[-38,-5]],metal);
+        panel([[-16,-15],[16,-15],[18,18],[-18,18]],hull);glass(0,-8,5,6);
+        for(const side of [-1,1])for(let i=0;i<3;i++){const x=side*(22+i*5);panel([[x-2,-5],[x+2,-5],[x+2,20],[x-2,20]],colors[0]);line([[x,6],[x,18]],colors[1],1.2);}
+      } else {
+        panel([[0,-30],[20,-21],[40,-13],[46,5],[36,23],[16,30],[0,21],[-16,30],[-36,23],[-46,5],[-40,-13],[-20,-21]],metal);
+        for(const side of [-1,1]){panel([[side*15,-15],[side*35,-9],[side*37,14],[side*17,21]],colors[0]);glass(side*25,-2,4,7);vent(side<0?-34:30,5,5);}
+        panel([[-10,-22],[10,-22],[13,12],[0,22],[-13,12]],hull);glass(0,-10,5,7);
+        paint.strokeStyle=colors[1];paint.lineWidth=2;paint.beginPath();paint.arc(0,5,8,0,Math.PI*2);paint.stroke();
       }
-      panel([[0, -21], [8, -11], [10, 8], [5, 17], [-5, 17], [-10, 8], [-8, -11]], hull);
-      glass(0, -8, 4, 6);
-      panel([[-6, 4], [6, 4], [5, 11], [-5, 11]], "#263e4b");
-      paint.fillStyle = "#edbf66"; paint.beginPath(); paint.arc(0, 6, 3, 0, Math.PI * 2); paint.fill();
-      line([[-5, -16], [0, -20], [5, -16]], "#f8e4a8", .9);
-      for (let i = 1; i < level; i++) {
-        for (const side of [-1, 1]) {
-          const x = side * (8 + i * 5);
-          paint.fillStyle = "#26344b"; paint.fillRect(x - 1.5, 9, 3, 12);
-          paint.fillStyle = level === 4 ? "#ffbe8d" : "#b6f3ff"; paint.fillRect(x - .8, 18, 1.6, 3);
-        }
-      }
-      if (level >= 3) {
-        paint.strokeStyle = level === 4 ? "#ffc38f" : "#dec2ff"; paint.lineWidth = 1;
-        paint.beginPath(); paint.arc(0, 6, 5, 0, Math.PI * 2); paint.stroke();
-      }
+      craftArtwork.set(key, art);return art;
     } else {
       const wide = ["leader", "armored", "elite"].includes(kind);
       const red = ["assault", "interceptor"].includes(kind);
@@ -1050,6 +1140,10 @@
     if (!boss) return;
     if (!(boss.flash > 0 && Math.floor(elapsed * 24) % 2 === 0)) {
       drawCraft("boss", boss.x, boss.y, Math.PI, boss.tier);
+      for(let i=0;i<(boss.growth||0);i++)for(const side of [-1,1]){
+        const x=boss.x+side*(10+i*6);ctx.fillStyle=boss.color;ctx.fillRect(x-1.5,boss.y+12,3,12);
+        ctx.fillStyle="#e9fbff";ctx.fillRect(x-1,boss.y+22,2,3);
+      }
     }
     const barW = 110;
     const y = 66;
@@ -1148,7 +1242,7 @@
       else {
         ctx.fillStyle = "#fff1ae"; ctx.font = "bold 10px ui-monospace, monospace";
         ctx.textAlign = "center"; ctx.textBaseline = "middle";
-        ctx.fillText(item.type === "weapon" ? String(item.level) : "★", 0, 0);
+        ctx.fillText(item.type === "weapon" ? String(item.level) : item.type === "emp" ? "E" : item.type === "flash" ? "F" : "★", 0, 0);
       }
       ctx.restore();
     }
@@ -1196,6 +1290,14 @@
     ctx.fillStyle = "rgba(255,255,255,.56)";
     ctx.fillRect(-8, fireButton.pressed ? -13 : -16, 5, 3);
     ctx.restore();
+  }
+  function drawSpecialButton() {
+    ctx.save();ctx.translate(specialButton.x,specialButton.y);
+    ctx.fillStyle="#0a1523";ctx.strokeStyle=specialAmmo.length?"#91d7ed":"#465667";ctx.lineWidth=1.5;
+    ctx.beginPath();ctx.arc(0,0,22,0,Math.PI*2);ctx.fill();ctx.stroke();
+    ctx.fillStyle=specialAmmo.length?"#ddf7ff":"#627080";ctx.textAlign="center";ctx.textBaseline="middle";ctx.font="bold 9px sans-serif";
+    ctx.fillText(specialAmmo[0]==="emp"?"EMP":specialAmmo[0]==="flash"?"FLASH":"특수",0,-4);
+    ctx.fillText(String(specialAmmo.length),0,8);ctx.restore();
   }
   function drawBanner() {
     if (bannerTime <= 0 || !banner) return;
@@ -1399,6 +1501,7 @@
       const points = enemy.kind === "leader" ? 250 : enemy.kind === "heavy" ? 220 : enemy.kind === "shield" ? 180 : enemy.kind === "armored" ? 120 : enemy.kind === "assault" ? 100 : 50;
       score += points + (enemy.dive ? 25 : 0);
       enemyExplosion(enemy);
+      if (amount < 999 && !enemy.escort && Math.random() < .03) items.push({ x: enemy.x, y: enemy.y, vy: 80, type: Math.random() < .5 ? "emp" : "flash" });
       if (enemy.carrying) {
         const rescuedPosition = captureAnimation && captureAnimation.enemy === enemy
           ? capturedFighterPosition(captureAnimation) : { x: enemy.x, y: enemy.y + 32 };
@@ -1426,6 +1529,7 @@
       if (nextWeapon) items.push({ x: boss.x, y: boss.y + 12, vy: 75, type: "weapon", level: nextWeapon });
       if (stage > 40 && stage < 100 && stage % 20 === 0) items.push({ x: boss.x - 28, y: boss.y + 12, vy: 70, type: "life" });
       boss = null;
+      enemies.forEach(e => { if (e.escort && e.alive) { enemyExplosion(e); e.alive = false; } });
     }
   }
   function fighterCenters() { return dualFighter ? [ship.x - 16, ship.x + 16] : [ship.x]; }
@@ -1493,11 +1597,13 @@
     screenShake = Math.max(0, screenShake - dt);
     updateEffects(dt);
     if (captureAnimation) {
-      captureAnimation.age += dt;
+      if (!(captureAnimation.enemy.stun > 0)) captureAnimation.age += dt;
       if (captureAnimation.age >= captureAnimation.duration) captureAnimation = null;
     }
     if (state !== "playing") return;
     elapsed += dt;
+    for(const e of [...enemies,...(boss?[boss]:[])]) { e.stun=Math.max(0,(e.stun||0)-dt);e.blind=Math.max(0,(e.blind||0)-dt); }
+    updateSpecials(dt);
     if (bannerTime > 0) bannerTime -= dt;
     if (fireButton.flash > 0) fireButton.flash -= dt;
     if (fireButton.pointer === null) fireButton.pressed = false;
@@ -1531,13 +1637,24 @@
         attackCooldown = combatDifficulty().interval;
       }
     } else if (boss) {
+      if (!(boss.stun > 0)) {
       boss.age += dt;
       boss.x += boss.dir * (38 + stage * .48) * dt;
       if (boss.x > W - 56) { boss.x = W - 56; boss.dir = -1; }
       if (boss.x < 56) { boss.x = 56; boss.dir = 1; }
       boss.y = 120 + Math.sin(boss.age * (1.1 + boss.tier * .15)) * (6 + boss.tier * 3);
       boss.shotTimer -= dt;
-      if (boss.shotTimer <= 0) { bossFire(); boss.shotTimer = Math.max(.7, 1.8 - stage * .006 - boss.tier * .13); }
+      if (boss.shotTimer <= 0) {
+        bossFire();
+        boss.shotTimer = boss.volley % 3 === 0 ? Math.max(1.7, 2.8 - (boss.growth || 0) * .18) : Math.max(.75, 1.6 - (boss.growth || 0) * .12 - boss.tier * .06);
+      }
+      for(const p of boss.pending||[]) { p.delay-=dt;if(p.delay<=0){
+        const aim=boss.blind>0?Math.PI/2:Math.atan2(ship.y-boss.y,ship.x-boss.x);
+        for(let i=0;i<p.count;i++)pushEnemyShot(boss.x,boss.y+25,aim+(i-(p.count-1)/2)*.09,110+stage*.5,boss.color,"straight",3);
+      }}
+      boss.pending=(boss.pending||[]).filter(p=>p.delay>0);
+      if (!(boss.blind > 0)) { boss.escortTimer-=dt;if(boss.escortTimer<=0){spawnEscorts();boss.escortTimer=Math.max(4,7-(boss.growth||0)*.5);} }
+      }
       boss.flash = Math.max(0, boss.flash - dt);
     }
 
@@ -1545,6 +1662,8 @@
       if (!enemy.alive) continue;
       enemy.flash = Math.max(0, enemy.flash - dt);
       enemy.shieldFlash = Math.max(0, (enemy.shieldFlash || 0) - dt);
+      if (enemy.stun > 0) continue;
+      if (enemy.escort) { updateEscort(enemy,dt);continue; }
       if (enemy.role === "captor" && updateCaptor(enemy, dt)) continue;
       const flight = enemy.entry || enemy.dive;
       if (!flight) {
@@ -1614,7 +1733,7 @@
       } else if (shot.type === "bullet") {
         const target = enemies.find(e => e.alive && distance(e.x, e.y, shot.x, shot.y) < 12);
         if (target) { shot.dead = true; damageEnemy(target, 1, shot.x, shot.y); }
-        if (boss && distance(boss.x, boss.y, shot.x, shot.y) < boss.hitRadius) { shot.dead = true; damageBoss(1); }
+        if (!target && boss && distance(boss.x, boss.y, shot.x, shot.y) < boss.hitRadius) { shot.dead = true; damageBoss(1); }
       }
     }
     playerShots = playerShots.filter(s => !s.dead && s.y > -30 && (s.type !== "laser" || s.ttl > 0) && (s.type !== "plasma" || s.ttl > 0));
@@ -1637,6 +1756,11 @@
           banner = "구출 성공 · 듀얼 파이터!"; bannerTime = 2;
           sweepVoice(330, 990, .4, "triangle", .06);
         } else if (item.type === "weapon") upgradeWeapon(item.level);
+        else if (item.type === "emp" || item.type === "flash") {
+          if(specialAmmo.length<2) { specialAmmo.push(item.type);banner=(item.type==="emp"?"EMP탄":"섬광탄")+" 획득 · 중앙 버튼으로 발사"; }
+          else banner="특수 무기 가득 참 · 최대 2회";
+          bannerTime=2;
+        }
         else if (item.type === "life") { lives += 1; banner = "보너스 기체 · 생명 +1"; bannerTime = 2; tone(1040, .16, "sine", .06); }
         else { score += 500; banner = "보너스 점수 +500"; bannerTime = 1.7; tone(760, .12, "sine", .05); }
       }
@@ -1672,11 +1796,13 @@
     if (boss) drawBoss();
     drawShots();
     drawItems();
+    drawSpecials();
     drawCaptureBeams();
     drawParticles();
     drawBursts();
     drawShip();
     drawControls();
+    drawSpecialButton();
     if (state === "title" && !cinema) drawOverlay("STAR SQUADRON");
     if (state === "victory") drawOverlay("CLEAR");
     if (state === "continue") drawContinue();
@@ -1742,6 +1868,7 @@
     if (state === "victory") beginGame();
     if (state !== "playing") return;
     initAudio();
+    if (distance(p.x,p.y,specialButton.x,specialButton.y)<26) { fireSpecial();return; }
     if (distance(p.x, p.y, joy.x, joy.y) < 48 && joy.pointer === null) {
       joy.pointer = event.pointerId;
       joy.knobX = clamp(p.x - joy.x, -19, 19);
