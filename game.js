@@ -494,7 +494,7 @@
     let available = [];
     for (let attempt = 0; attempt < order.length; attempt++) {
       const kind = order[groupAttackIndex++ % order.length];
-      available = enemies.filter(e => e.alive && !e.entry && !e.dive && !e.beam && !e.escape && e.kind === kind && (e.role !== "captor" || e.carrying || dualFighter || captivePending || lives <= 1));
+      available = enemies.filter(e => e.alive && !e.entry && !e.dive && !e.beam && !e.escape && e.kind === kind && (e.role !== "captor" || e.carrying || dualFighter || captivePending || lives <= 0));
       if (available.length) break;
     }
     if (!available.length) return;
@@ -598,7 +598,7 @@
   }
 
   function captureFighter(enemy) {
-    if (dualFighter || captivePending || ship.invulnerable > 0 || lives <= 1 || respawnDelay > 0) return;
+    if (state !== "playing" || dualFighter || captivePending || ship.invulnerable > 0 || lives <= 0 || respawnDelay > 0) return;
     captureAnimation = { x: ship.x, y: ship.y, enemy, age: 0, duration: 1.1 };
     captivePending = true; enemy.carrying = true;
     const previousLives = lives;
@@ -606,6 +606,14 @@
     enemyShots = []; resetControls(); ship.x = W / 2;
     banner = `기체 납치 · 생명 ${previousLives}→${lives} · 구출하세요`; bannerTime = 3;
     sweepVoice(780, 150, .65, "sine", .075, 0, 25);
+    if (lives === 0) {
+      state = "continue";
+      continueDeadline = Date.now() + 10000;
+      if (score > highScore) {
+        highScore = score;
+        writeNumber("ss-high", highScore);
+      }
+    }
   }
   function updateCaptor(enemy, dt) {
     if (enemy.blind > 0 && enemy.beam && enemy.beam.phase !== "return" && !enemy.carrying) {
@@ -645,7 +653,7 @@
       }
       return true;
     }
-    if (enemy.entry || enemy.dive || enemy.carrying || dualFighter || captivePending || lives <= 1) return false;
+    if (enemy.entry || enemy.dive || enemy.carrying || dualFighter || captivePending || lives <= 0) return false;
     enemy.beamCooldown -= dt;
     if (!(enemy.blind > 0) && enemy.beamCooldown <= 0 && !enemies.some(e => e.alive && (e.entry || e.beam || (stage < 30 && e.dive)))) {
       enemy.beam = { phase: "approach", age: 0, fromX: enemy.x, fromY: enemy.y,
@@ -714,6 +722,7 @@
     if (shot.type === "homing" && shot.y >= ship.y - 8) shot.guidanceEnded = true;
   }
   function enemyFire(enemy) {
+    if (enemy.dive?.wrapReturn && (enemy.dive.passedPlayer || enemy.y >= ship.y)) return;
     missileSound();
     const speed = combatDifficulty().missileSpeed;
     const baseAngle = enemy.blind > 0 ? Math.PI / 2 : Math.atan2(ship.y - enemy.y, ship.x - enemy.x);
@@ -1747,6 +1756,7 @@
     }
 
     for (const enemy of enemies) {
+      if (state !== "playing") break;
       if (!enemy.alive) continue;
       enemy.flash = Math.max(0, enemy.flash - dt);
       enemy.shieldFlash = Math.max(0, (enemy.shieldFlash || 0) - dt);
@@ -1766,6 +1776,7 @@
         const ahead = flightPosition(flight, Math.min(1, p + 0.003));
         enemy.x = position.x;
         enemy.y = position.y;
+        if (enemy.dive && flight.wrapReturn && enemy.y >= ship.y) flight.passedPlayer = true;
         enemy.angle = Math.atan2(ahead.x - position.x, -(ahead.y - position.y));
         if (enemy.entry && flight.nextShot < flight.fireTimes.length && p >= flight.fireTimes[flight.nextShot]) {
           // Only the wing's designated shooter fires during entry.
