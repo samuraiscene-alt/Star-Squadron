@@ -56,6 +56,7 @@
   let specialShots = [];
   let specialFields = [];
   let specialCooldown = 0;
+  let specialDropTimer = 0;
   const specialButton = { x: W / 2, y: 0 };
   let respawnDelay = 0;
   let dualFighter = false;
@@ -429,6 +430,7 @@
   }
   function beginGame() {
     specialAmmo = []; specialShots = []; specialFields = []; specialCooldown = 0;
+    specialDropTimer = 0;
     if (cinema) cinema.hide();
     resetControls();
     stopSounds();
@@ -790,6 +792,34 @@
     specialFields.push({ x: shot.x, y: shot.y, type: shot.type, radius: shot.type === "emp" ? 78 : 85,
       age: 0, duration: shot.type === "emp" ? .65 : 3 });
     sweepVoice(shot.type === "emp" ? 1200 : 650, 130, .35, "triangle", .06);
+    if (shot.type === "emp") {
+      screenShake = Math.max(screenShake, .12);
+      noiseVoice(.18, 4600, 600, .07, "highpass");
+      noiseVoice(.12, 3000, 900, .045, "bandpass", .09);
+    } else noiseVoice(.13, 7000, 1700, .045, "highpass");
+  }
+  function specialDropRules() {
+    return stage <= 10 ? { chance: .01, interval: 30 } : stage <= 30 ? { chance: .015, interval: 25 }
+      : stage <= 60 ? { chance: .02, interval: 20 } : { chance: .025, interval: 15 };
+  }
+  function trySpecialDrop(enemy) {
+    if (enemy.escort || specialAmmo.length >= 2 || specialDropTimer > 0 ||
+      items.some(i => !i.caught && (i.type === "emp" || i.type === "flash"))) return;
+    const rule = specialDropRules();
+    if (Math.random() >= rule.chance) return;
+    items.push({ x: enemy.x, y: enemy.y, vy: 80, type: Math.random() < .5 ? "emp" : "flash" });
+    specialDropTimer = rule.interval;
+  }
+  function drawSpecialIcon(type, x, y, size = 8) {
+    ctx.save();ctx.translate(x,y);ctx.scale(size/8,size/8);
+    ctx.fillStyle=ctx.strokeStyle=type==="emp"?"#86dcff":"#ffe39a";ctx.lineWidth=1.4;
+    if(type==="emp") {
+      ctx.beginPath();ctx.moveTo(2,-8);ctx.lineTo(-5,1);ctx.lineTo(-1,1);ctx.lineTo(-3,8);ctx.lineTo(5,-2);ctx.lineTo(1,-2);ctx.closePath();ctx.fill();
+    } else {
+      ctx.beginPath();ctx.arc(0,0,3,0,Math.PI*2);ctx.fill();
+      for(let i=0;i<8;i++){const a=i*Math.PI/4;ctx.beginPath();ctx.moveTo(Math.cos(a)*5,Math.sin(a)*5);ctx.lineTo(Math.cos(a)*8,Math.sin(a)*8);ctx.stroke();}
+    }
+    ctx.restore();
   }
   function updateSpecials(dt) {
     specialCooldown = Math.max(0, specialCooldown - dt);
@@ -821,8 +851,20 @@
   }
   function drawSpecials() {
     for(const s of specialShots){ctx.fillStyle=s.type==="emp"?"#84daff":"#ffe4a0";ctx.fillRect(s.x-3,s.y-9,6,14);}
-    for(const f of specialFields){ctx.save();ctx.globalAlpha=(1-f.age/f.duration)*.32;ctx.fillStyle=f.type==="emp"?"#66caff":"#ffedbd";
-      ctx.beginPath();ctx.arc(f.x,f.y,f.radius,0,Math.PI*2);ctx.fill();ctx.globalAlpha=(1-f.age/f.duration)*.8;ctx.strokeStyle=ctx.fillStyle;ctx.lineWidth=2;ctx.stroke();ctx.restore();}
+    for(const f of specialFields){ctx.save();ctx.globalAlpha=(1-f.age/f.duration)*.24;ctx.fillStyle=f.type==="emp"?"#66caff":"#ffedbd";
+      ctx.beginPath();ctx.arc(f.x,f.y,f.radius,0,Math.PI*2);ctx.fill();ctx.globalAlpha=(1-f.age/f.duration)*.8;ctx.strokeStyle=ctx.fillStyle;ctx.lineWidth=2;ctx.stroke();
+      const pulse=clamp(f.age/.35,0,1);
+      ctx.globalAlpha=(1-pulse)*.9;ctx.lineWidth=3*(1-pulse)+1;ctx.beginPath();ctx.arc(f.x,f.y,8+(f.radius-8)*pulse,0,Math.PI*2);ctx.stroke();
+      if(f.type==="flash" && f.age<.18){ctx.globalAlpha=.35*Math.pow(1-f.age/.18,2);ctx.fillStyle="#fff8dd";ctx.fillRect(0,0,W,H);}
+      if(f.type==="emp") {
+        ctx.strokeStyle="#c6f4ff";ctx.globalAlpha=(1-f.age/f.duration)*.8;ctx.lineWidth=1.2;
+        for(let i=0;i<9;i++){const a=i*Math.PI*2/9+f.age*.7;ctx.beginPath();
+          for(let j=0;j<6;j++){const r=12+j*(f.radius-14)/5;const bend=Math.sin(i*7+j*5+f.age*37)*8;
+            const x=f.x+Math.cos(a)*r-Math.sin(a)*bend,y=f.y+Math.sin(a)*r+Math.cos(a)*bend;if(j===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);}ctx.stroke();}
+        if(f.age<.25){ctx.globalAlpha=(1-f.age/.25)*.13;ctx.fillStyle="#9cdbff";
+          for(let i=0;i<15;i++){const y=(i*53+Math.floor(f.age*35)*17)%Math.max(1,ship.y+30);ctx.fillRect((i%3)*12,y,W-24,1+i%2);}}
+      }
+      ctx.restore();}
     enemies.filter(e=>e.alive).forEach(drawStatus);if(boss)drawStatus(boss);
   }
 
@@ -1243,11 +1285,12 @@
       }
       ctx.save(); ctx.translate(item.x, item.y);
       ctx.rotate(Math.sin(elapsed * 5) * .08);
-      ctx.fillStyle = ["life", "rescue"].includes(item.type) ? "#213c60" : item.type === "weapon" ? "#9f7730" : "#745820";
-      ctx.strokeStyle = ["life", "rescue"].includes(item.type) ? "#8ce7ff" : "#fce199";
+      ctx.fillStyle = item.type === "emp" ? "#173c55" : item.type === "flash" ? "#574518" : ["life", "rescue"].includes(item.type) ? "#213c60" : item.type === "weapon" ? "#9f7730" : "#745820";
+      ctx.strokeStyle = item.type === "emp" ? "#86dcff" : ["life", "rescue"].includes(item.type) ? "#8ce7ff" : "#fce199";
       ctx.lineWidth = 1;
       ctx.fillRect(-11, -11, 22, 22); ctx.strokeRect(-11, -11, 22, 22);
       if (["life", "rescue"].includes(item.type)) drawCraft("player", 0, 0, 0, 1, true);
+      else if (item.type === "emp" || item.type === "flash") drawSpecialIcon(item.type,0,0);
       else {
         ctx.fillStyle = "#fff1ae"; ctx.font = "bold 10px ui-monospace, monospace";
         ctx.textAlign = "center"; ctx.textBaseline = "middle";
@@ -1305,8 +1348,13 @@
     ctx.fillStyle="#0a1523";ctx.strokeStyle=specialAmmo.length?"#91d7ed":"#465667";ctx.lineWidth=1.5;
     ctx.beginPath();ctx.arc(0,0,22,0,Math.PI*2);ctx.fill();ctx.stroke();
     ctx.fillStyle=specialAmmo.length?"#ddf7ff":"#627080";ctx.textAlign="center";ctx.textBaseline="middle";ctx.font="bold 9px sans-serif";
-    ctx.fillText(specialAmmo[0]==="emp"?"EMP":specialAmmo[0]==="flash"?"FLASH":"특수",0,-4);
-    ctx.fillText(String(specialAmmo.length),0,8);ctx.restore();
+    ctx.font="bold 7px sans-serif";ctx.fillText(specialAmmo[0]==="emp"?"EMP":specialAmmo[0]==="flash"?"FLASH":"특수",0,-11);
+    for(let slot=0;slot<2;slot++){
+      const x=slot?10:-10;ctx.strokeStyle=specialAmmo[slot]?(slot===0?"#f4ffff":"#768d9e"):"#354555";ctx.lineWidth=slot===0&&specialAmmo[0]?1.5:1;
+      ctx.beginPath();ctx.arc(x,6,8.5,0,Math.PI*2);ctx.stroke();
+      if(specialAmmo[slot])drawSpecialIcon(specialAmmo[slot],x,6,5.5);
+    }
+    ctx.restore();
   }
   function drawBanner() {
     if (bannerTime <= 0 || !banner) return;
@@ -1510,7 +1558,7 @@
       const points = enemy.kind === "leader" ? 250 : enemy.kind === "heavy" ? 220 : enemy.kind === "shield" ? 180 : enemy.kind === "armored" ? 120 : enemy.kind === "assault" ? 100 : 50;
       score += points + (enemy.dive ? 25 : 0);
       enemyExplosion(enemy);
-      if (amount < 999 && !enemy.escort && Math.random() < .03) items.push({ x: enemy.x, y: enemy.y, vy: 80, type: Math.random() < .5 ? "emp" : "flash" });
+      if (amount < 999) trySpecialDrop(enemy);
       if (enemy.carrying) {
         const interrupted = captureAnimation && captureAnimation.enemy === enemy;
         enemy.carrying = false; captivePending = false;
@@ -1617,6 +1665,7 @@
     }
     if (state !== "playing") return;
     elapsed += dt;
+    specialDropTimer = Math.max(0, specialDropTimer - dt);
     for(const e of [...enemies,...(boss?[boss]:[])]) { e.stun=Math.max(0,(e.stun||0)-dt);e.blind=Math.max(0,(e.blind||0)-dt); }
     updateSpecials(dt);
     if (bannerTime > 0) bannerTime -= dt;

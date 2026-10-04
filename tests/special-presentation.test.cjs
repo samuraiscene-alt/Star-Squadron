@@ -1,0 +1,18 @@
+const fs=require('fs'),vm=require('vm'),assert=require('assert'),{createCanvas}=require('@napi-rs/canvas');
+const canvas=createCanvas(360,780);canvas.addEventListener=()=>{};canvas.getBoundingClientRect=()=>({left:0,top:0,width:360,height:780});
+const math=Object.create(Math);math.random=()=>0;
+const sandbox={Math:math,Set,Map,window:{devicePixelRatio:1,addEventListener(){},setTimeout(){}},document:{getElementById:()=>canvas,createElement:()=>createCanvas(1,1),addEventListener(){}},navigator:{},location:{protocol:'file:'},localStorage:{getItem:()=>null,setItem(){}},requestAnimationFrame(){}};
+let source=fs.readFileSync(require('path').join(__dirname,'../game.js'),'utf8').replace(/\}\)\(\);\s*$/,`globalThis.g={beginGame,startStage,update,pauseGame,resumeGame,specialBurst,drawSpecials,drawSpecialButton,drawItems,specialDropRules,trySpecialDrop,get:()=>({items,specialAmmo,specialDropTimer,specialFields,ship}),setStage:n=>{stage=n;startStage()},ammo:a=>specialAmmo=a};})();`);
+vm.runInNewContext(source,sandbox);const g=sandbox.g;const enemy={x:100,y:180};
+for(const [stage,chance,interval] of [[1,.01,30],[10,.01,30],[11,.015,25],[30,.015,25],[31,.02,20],[60,.02,20],[61,.025,15],[100,.025,15]]){
+ g.beginGame();g.setStage(stage);const rule=g.specialDropRules();assert.equal(rule.chance,chance);assert.equal(rule.interval,interval);
+ math.random=()=>chance;g.trySpecialDrop(enemy);assert.equal(g.get().items.length,0,'chance boundary excludes drop');math.random=()=>0;g.trySpecialDrop(enemy);assert.equal(g.get().items.length,1);assert.equal(g.get().specialDropTimer,interval);
+ g.get().items.length=0;g.trySpecialDrop(enemy);assert.equal(g.get().items.length,0,'cooldown blocks second drop');g.get().ship.invulnerable=999;g.update(interval-.1);g.trySpecialDrop(enemy);assert.equal(g.get().items.filter(i=>i.type==='emp'||i.type==='flash').length,0);g.update(.11);g.trySpecialDrop(enemy);assert.equal(g.get().items.filter(i=>i.type==='emp'||i.type==='flash').length,1);
+}
+g.beginGame();g.ammo(['emp','flash']);g.trySpecialDrop(enemy);assert.equal(g.get().items.length,0);g.ammo([]);g.trySpecialDrop({...enemy,escort:true});assert.equal(g.get().items.length,0);g.get().items.push({type:'flash'});g.trySpecialDrop(enemy);assert.equal(g.get().items.length,1);
+g.beginGame();g.trySpecialDrop(enemy);g.setStage(2);assert.equal(g.get().specialDropTimer,30,'stage change retains minimum interval');g.pauseGame();g.update(10);assert.equal(g.get().specialDropTimer,30);g.beginGame();assert.equal(g.get().specialDropTimer,0);
+const ctx=canvas.getContext('2d');let images=[];
+for(const ammo of [['emp','flash'],['flash','emp'],['emp','emp'],['flash','flash']]){ctx.fillStyle='#07101a';ctx.fillRect(0,0,360,780);g.ammo(ammo);g.drawSpecialButton();g.get().items.length=0;g.get().items.push({type:'emp',x:130,y:650},{type:'flash',x:230,y:650});g.drawItems();const image=canvas.toBuffer('image/png');images.push(image.toString('base64'));fs.writeFileSync('/tmp/v27-slots-'+ammo.join('-')+'.png',image);}
+assert.equal(new Set(images).size,4,'all mixed and matching inventories are distinct');
+for(const type of ['flash','emp']){g.beginGame();g.specialBurst({x:180,y:330,type});g.get().specialFields[0].age=.05;ctx.fillStyle='#07101a';ctx.fillRect(0,0,360,780);g.drawSpecials();fs.writeFileSync('/tmp/v27-'+type+'.png',canvas.toBuffer('image/png'));const p=ctx.getImageData(5,5,1,1).data;if(type==='flash')assert(p[0]>20,'brief full-screen flash');}
+console.log('PASS: exact drop tiers/chance boundaries, active-game cooldown across stages/pause, full inventory and existing item/escort exclusion, four distinct inventory icons, native flash and EMP renders');
