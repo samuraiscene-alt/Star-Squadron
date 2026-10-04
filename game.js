@@ -599,9 +599,10 @@
     if (dualFighter || captivePending || ship.invulnerable > 0 || lives <= 1 || respawnDelay > 0) return;
     captureAnimation = { x: ship.x, y: ship.y, enemy, age: 0, duration: 1.1 };
     captivePending = true; enemy.carrying = true;
+    const previousLives = lives;
     lives -= 1; respawnDelay = 1.5; ship.invulnerable = 2.6;
     enemyShots = []; resetControls(); ship.x = W / 2;
-    banner = "기체 납치! 보라색 특수기를 격추해서 구출하세요"; bannerTime = 3;
+    banner = `기체 납치 · 생명 ${previousLives}→${lives} · 구출하세요`; bannerTime = 3;
     sweepVoice(780, 150, .65, "sine", .075, 0, 25);
   }
   function updateCaptor(enemy, dt) {
@@ -870,7 +871,9 @@
     for (let i = 0; i < Math.min(lives, 5); i++) {
       drawCraft("player", 22 + i * 17, 54, 0, 1, true);
     }
-    if (lives > 5) { ctx.textAlign = "left"; ctx.fillStyle = "#b7d7ec"; ctx.font = "10px ui-monospace, monospace"; ctx.fillText("×" + lives, 110, 49); }
+    ctx.save();ctx.textAlign = "left";ctx.textBaseline = "middle";
+    ctx.fillStyle = "#b7d7ec";ctx.font = "10px ui-monospace, monospace";
+    ctx.fillText("×" + lives, 25 + Math.min(lives, 5) * 17, 54);ctx.restore();
     const soundX = W - 21;
     ctx.strokeStyle = soundEnabled ? "#8390a0" : "#444d59";
     ctx.lineWidth = 1.4;
